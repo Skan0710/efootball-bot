@@ -11,7 +11,9 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from commands_handler import register_commands
 from config import BotConfig, load_config, setup_logging
+from excel_manager import ExcelManager
 
 LOGGER = logging.getLogger("efootball_bot.bot")
 
@@ -21,7 +23,6 @@ class EFootballBot(commands.Bot):
 
     def __init__(self, config: BotConfig) -> None:
         intents = discord.Intents.default()
-        # Explicitly configure default intents (message content is not required for slash commands)
         intents.message_content = False
 
         super().__init__(
@@ -31,6 +32,32 @@ class EFootballBot(commands.Bot):
         )
         self.bot_config = config
         self.guild_object = discord.Object(id=self.bot_config.guild_id)
+        self.excel_manager = ExcelManager(self.bot_config.workbook_path)
+
+        # Register the 6 required slash commands
+        register_commands(self.tree, self.bot_config, self.excel_manager)
+
+        # Configure tree error handler
+        self.tree.on_error = self.on_tree_error
+
+    async def on_tree_error(
+        self, interaction: discord.Interaction, error: app_commands.AppCommandError
+    ) -> None:
+        """Global slash command error handling."""
+        LOGGER.error("Slash command error in %s: %s", interaction.command.name if interaction.command else "unknown", error)
+        msg = "❌ An unexpected error occurred while executing this command."
+        if isinstance(error, app_commands.CheckFailure):
+            msg = "❌ You do not have permission or are in the wrong channel for this command."
+        elif isinstance(error, app_commands.CommandOnCooldown):
+            msg = f"⏳ Command is on cooldown. Try again in {error.retry_after:.1f}s."
+
+        try:
+            if interaction.response.is_done():
+                await interaction.followup.send(msg, ephemeral=True)
+            else:
+                await interaction.response.send_message(msg, ephemeral=True)
+        except Exception:
+            pass
 
     async def setup_hook(self) -> None:
         """Executes before bot starts listening. Synchronizes commands to target guild."""
@@ -40,7 +67,7 @@ class EFootballBot(commands.Bot):
         LOGGER.info(
             "Syncing slash commands exclusively to Guild ID: %s", self.bot_config.guild_id
         )
-        # Copy global app_commands to guild tree for instant update without global Discord delay
+        # Copy global app_commands to guild tree for instant sync without 1-hour Discord global cache delay
         self.tree.copy_global_to(guild=self.guild_object)
         synced = await self.tree.sync(guild=self.guild_object)
         LOGGER.info("Synced %d slash commands to guild %s", len(synced), self.bot_config.guild_id)
