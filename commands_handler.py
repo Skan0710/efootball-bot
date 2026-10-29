@@ -24,6 +24,7 @@ from models import (
     MatchResult,
     OCRPlayerCandidate,
     PlayerStat,
+    canonicalize_player_name,
 )
 from ocr import extract_player_stats_from_screenshot, validate_image_file
 from stats import (
@@ -117,7 +118,7 @@ def parse_players_from_team_param(team_param: Optional[str]) -> List[str]:
     if s.lower() in ("home", "away", "opponent", "opponents", "none", "xi", "team"):
         return []
     parts = re.split(r"\s+(?:and|&|\+)\s*|,\s*", s, flags=re.IGNORECASE)
-    return [p.strip() for p in parts if p.strip()]
+    return [canonicalize_player_name(p.strip()) for p in parts if p.strip()]
 
 
 def build_preview_embed(
@@ -227,6 +228,7 @@ def parse_modal_candidate_lines(
             continue
 
         name, goals_str, assists_str = parts
+        name = canonicalize_player_name(name)
         if not name:
             errors.append(f"{label}: Player name cannot be empty.")
             continue

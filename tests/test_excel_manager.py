@@ -96,7 +96,7 @@ async def test_save_and_get_match(tmp_path: Path) -> None:
     assert len(fetched.player_stats) == 2
 
     # Check player row contents
-    skan = next(p for p in fetched.player_stats if p.player == "SkanRocky")
+    skan = next(p for p in fetched.player_stats if p.player == "Skan")
     assert skan.goals == 2
     assert skan.assists == 0
 

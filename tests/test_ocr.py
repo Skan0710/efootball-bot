@@ -136,11 +136,11 @@ def test_ocr_pipeline_with_mocked_tesseract(tmp_path: Path) -> None:
     assert result.success is True
     assert len(result.candidates) == 2
 
-    skan = next(c for c in result.candidates if c.player == "SkanRocky")
+    skan = next(c for c in result.candidates if c.player == "Skan")
     assert skan.goals == 2
     assert skan.assists == 0
 
-    lilly = next(c for c in result.candidates if c.player == "lillym")
+    lilly = next(c for c in result.candidates if c.player == "Lilly")
     assert lilly.goals == 0
     assert lilly.assists == 1
 
@@ -169,13 +169,13 @@ def test_real_efootball_details_screenshot_extraction() -> None:
     result = extract_player_stats_from_screenshot(fixture_path)
     assert result.success is True
     names = [c.player for c in result.candidates]
-    assert "SkanRocky" in names
-    assert "SuriBG6" in names
+    assert "Skan" in names
+    assert "Suri" in names
 
-    skan = next(c for c in result.candidates if c.player == "SkanRocky")
+    skan = next(c for c in result.candidates if c.player == "Skan")
     assert skan.goals == 3
     assert skan.assists == 1
 
-    suri = next(c for c in result.candidates if c.player == "SuriBG6")
+    suri = next(c for c in result.candidates if c.player == "Suri")
     assert suri.goals == 1
     assert suri.assists == 2

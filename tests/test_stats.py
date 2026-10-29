@@ -55,10 +55,10 @@ def test_calculate_player_aggregates_multiple_matches() -> None:
 
     aggregates = calculate_player_aggregates(raw_stats)
     assert len(aggregates) == 2
-    assert "skanrocky" in aggregates
-    assert "lillym" in aggregates
+    assert "skan" in aggregates
+    assert "lilly" in aggregates
 
-    skan = aggregates["skanrocky"]
+    skan = aggregates["skan"]
     assert skan.matches_played == 3
     assert skan.goals == 3
     assert skan.assists == 3
@@ -69,7 +69,7 @@ def test_calculate_player_aggregates_multiple_matches() -> None:
     assert skan.loss_rate == 33.3
     assert skan.draw_rate == 33.3
 
-    lilly = aggregates["lillym"]
+    lilly = aggregates["lilly"]
     assert lilly.matches_played == 1
     assert lilly.goals == 1
     assert lilly.assists == 3
@@ -155,3 +155,81 @@ def test_get_all_teammates_alphabetical() -> None:
     teammates = get_all_teammates(aggregates)
     names = [t.player for t in teammates]
     assert names == ["Alice", "Bob", "Zack"]
+
+
+def test_player_name_canonicalization() -> None:
+    """Verifies all specified player aliases map to their exact canonical identity."""
+    from models import canonicalize_player_name
+
+    # Lilly
+    assert canonicalize_player_name("lillym") == "Lilly"
+    assert canonicalize_player_name("lilly") == "Lilly"
+    assert canonicalize_player_name("maple") == "Lilly"
+    assert canonicalize_player_name("MAPLE") == "Lilly"
+
+    # Annie
+    assert canonicalize_player_name("AnnieSynx") == "Annie"
+    assert canonicalize_player_name("annie") == "Annie"
+    assert canonicalize_player_name("ANNIE") == "Annie"
+
+    # Naka
+    assert canonicalize_player_name("Son") == "Naka"
+    assert canonicalize_player_name("SoNaka") == "Naka"
+    assert canonicalize_player_name("sonaka") == "Naka"
+    assert canonicalize_player_name("Naka") == "Naka"
+
+    # Suri
+    assert canonicalize_player_name("SuriBG") == "Suri"
+    assert canonicalize_player_name("Suri") == "Suri"
+    assert canonicalize_player_name("suribg6") == "Suri"
+
+    # Skan
+    assert canonicalize_player_name("SkanxPrznt07") == "Skan"
+    assert canonicalize_player_name("SkanRocky") == "Skan"
+    assert canonicalize_player_name("skan") == "Skan"
+
+
+def test_multiple_aliases_merged_into_single_player_record() -> None:
+    """Verifies stats for different aliases merge into one single canonical player record."""
+    raw_stats = [
+        PlayerStat(player="lillym", goals=1, assists=1, result=MatchResult.WIN),
+        PlayerStat(player="maple", goals=2, assists=0, result=MatchResult.WIN),
+        PlayerStat(player="Lilly", goals=0, assists=2, result=MatchResult.LOSS),
+        PlayerStat(player="SkanxPrznt07", goals=3, assists=1, result=MatchResult.WIN),
+        PlayerStat(player="SkanRocky", goals=2, assists=1, result=MatchResult.WIN),
+        PlayerStat(player="SoNaka", goals=1, assists=0, result=MatchResult.WIN),
+        PlayerStat(player="Son", goals=1, assists=2, result=MatchResult.LOSS),
+    ]
+
+    aggregates = calculate_player_aggregates(raw_stats)
+
+    # All Lilly variants merged into one "Lilly"
+    lilly_rec = get_player_record("Lilly", aggregates)
+    assert lilly_rec is not None
+    assert lilly_rec.player == "Lilly"
+    assert lilly_rec.matches_played == 3
+    assert lilly_rec.goals == 3
+    assert lilly_rec.assists == 3
+    assert lilly_rec.wins == 2
+    assert lilly_rec.losses == 1
+
+    # Look up using alias
+    assert get_player_record("maple", aggregates) == lilly_rec
+    assert get_player_record("lillym", aggregates) == lilly_rec
+
+    # All Skan variants merged into "Skan"
+    skan_rec = get_player_record("Skan", aggregates)
+    assert skan_rec is not None
+    assert skan_rec.player == "Skan"
+    assert skan_rec.matches_played == 2
+    assert skan_rec.goals == 5
+    assert skan_rec.assists == 2
+
+    # All Naka variants merged into "Naka"
+    naka_rec = get_player_record("Naka", aggregates)
+    assert naka_rec is not None
+    assert naka_rec.player == "Naka"
+    assert naka_rec.matches_played == 2
+    assert naka_rec.goals == 2
+    assert naka_rec.assists == 2
+

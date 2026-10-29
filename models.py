@@ -5,7 +5,61 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import List, Optional
+import re
+from typing import Dict, List, Optional
+
+
+PLAYER_CANONICAL_MAP: Dict[str, str] = {
+    # Lilly (lillym, lilly, maple)
+    "lilly": "Lilly",
+    "lillym": "Lilly",
+    "maple": "Lilly",
+    # Annie (AnnieSynx, annie)
+    "annie": "Annie",
+    "anniesynx": "Annie",
+    # Naka (Son, SoNaka, naka)
+    "son": "Naka",
+    "sonaka": "Naka",
+    "naka": "Naka",
+    # Suri (SuriBG, Suri, SuriBG6)
+    "suri": "Suri",
+    "suribg": "Suri",
+    "suribg6": "Suri",
+    # Skan (SkanxPrznt07, SkanRocky, skan)
+    "skan": "Skan",
+    "skanrocky": "Skan",
+    "skanxprznt07": "Skan",
+}
+
+
+def canonicalize_player_name(name: str) -> str:
+    """Maps player name variants and OCR artifacts to canonical registered player names.
+
+    Ensures that aliases like 'lillym', 'maple', 'AnnieSynx', 'SoNaka', 'Son', 'SuriBG',
+    'SkanRocky', etc. all resolve to single canonical identities.
+    """
+    if not name:
+        return ""
+
+    raw = name.strip()
+    clean = re.sub(r"[^a-zA-Z0-9]", "", raw).lower()
+
+    if clean in PLAYER_CANONICAL_MAP:
+        return PLAYER_CANONICAL_MAP[clean]
+
+    # Prefix / stem checks for OCR variations and noise
+    if clean.startswith("skan"):
+        return "Skan"
+    if clean.startswith("suribg") or clean.startswith("suri"):
+        return "Suri"
+    if clean.startswith("lilly") or clean.startswith("maple"):
+        return "Lilly"
+    if clean.startswith("annie"):
+        return "Annie"
+    if clean == "son" or clean.startswith("sonaka") or clean.startswith("naka"):
+        return "Naka"
+
+    return raw
 
 
 class MatchResult(str, Enum):
@@ -59,7 +113,7 @@ class PlayerStat:
     result: MatchResult
 
     def __post_init__(self) -> None:
-        self.player = self.player.strip()
+        self.player = canonicalize_player_name(self.player)
         if not self.player:
             raise ValueError("Player name cannot be empty.")
         if self.goals < 0:
@@ -151,3 +205,6 @@ class OCRPlayerCandidate:
     goals: int
     assists: int
     confidence_note: str = ""
+
+    def __post_init__(self) -> None:
+        self.player = canonicalize_player_name(self.player)

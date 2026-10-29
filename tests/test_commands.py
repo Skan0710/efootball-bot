@@ -175,10 +175,10 @@ async def test_edit_stats_modal_validation() -> None:
     await modal.on_submit(interaction)
 
     assert len(view.candidates) == 2
-    assert view.candidates[0].player == "SkanRocky"
+    assert view.candidates[0].player == "Skan"
     assert view.candidates[0].goals == 2
     assert view.candidates[0].assists == 1
-    assert view.candidates[1].player == "lillym"
+    assert view.candidates[1].player == "Lilly"
     assert view.candidates[1].goals == 0
     assert view.candidates[1].assists == 3
     interaction.response.edit_message.assert_awaited_once()

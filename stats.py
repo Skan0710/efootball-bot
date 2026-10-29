@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional
 
-from models import LeaderboardCategory, MatchResult, PlayerAggregateRecord, PlayerStat
+from models import LeaderboardCategory, MatchResult, PlayerAggregateRecord, PlayerStat, canonicalize_player_name
 
 
 def calculate_player_aggregates(player_stats: List[PlayerStat]) -> Dict[str, PlayerAggregateRecord]:
@@ -65,8 +65,9 @@ def get_player_record(
     player_name: str, aggregates: Dict[str, PlayerAggregateRecord]
 ) -> Optional[PlayerAggregateRecord]:
     """Performs case-insensitive lookup of a player's career record."""
-    normalized = player_name.strip().lower()
-    return aggregates.get(normalized)
+    canonical = canonicalize_player_name(player_name)
+    normalized = canonical.strip().lower()
+    return aggregates.get(normalized) or aggregates.get(player_name.strip().lower())
 
 
 def get_leaderboard(
