@@ -211,6 +211,43 @@ def build_preview_embed(
     return embed
 
 
+def parse_modal_candidate_lines(
+    text: str, prefix: str = ""
+) -> Tuple[List[OCRPlayerCandidate], List[str]]:
+    """Helper to parse multi-line comma-separated player, goals, assists text."""
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    candidates: List[OCRPlayerCandidate] = []
+    errors: List[str] = []
+
+    for line_num, line in enumerate(lines, start=1):
+        parts = [p.strip() for p in line.split(",")]
+        label = f"{prefix} Line {line_num}" if prefix else f"Line {line_num}"
+        if len(parts) != 3:
+            errors.append(f"{label}: Expected 'Player, Goals, Assists', got '{line}'")
+            continue
+
+        name, goals_str, assists_str = parts
+        if not name:
+            errors.append(f"{label}: Player name cannot be empty.")
+            continue
+
+        try:
+            goals = int(goals_str)
+            assists = int(assists_str)
+            if goals < 0 or assists < 0:
+                errors.append(f"{label}: Goals and assists cannot be negative.")
+                continue
+        except ValueError:
+            errors.append(f"{label}: Goals and assists must be whole numbers.")
+            continue
+
+        candidates.append(
+            OCRPlayerCandidate(player=name, goals=goals, assists=assists, confidence_note="Manual entry")
+        )
+
+    return candidates, errors
+
+
 class EditStatsModal(discord.ui.Modal, title="Edit Match Players, Stats & Result"):
     """Modal allowing manual correction of player names, goals, assists, scores, and result."""
 
@@ -254,9 +291,6 @@ class EditStatsModal(discord.ui.Modal, title="Edit Match Players, Stats & Result
         max_length=20,
     )
 
-    # Alias for backwards compatibility with tests
-    stats_input = home_stats_input
-
     def __init__(self, parent_view: MatchPreviewView) -> None:
         super().__init__()
         self.parent_view = parent_view
@@ -282,37 +316,7 @@ class EditStatsModal(discord.ui.Modal, title="Edit Match Players, Stats & Result
     def _parse_candidate_lines(
         self, text: str, prefix: str = ""
     ) -> Tuple[List[OCRPlayerCandidate], List[str]]:
-        lines = [line.strip() for line in text.splitlines() if line.strip()]
-        candidates: List[OCRPlayerCandidate] = []
-        errors: List[str] = []
-
-        for line_num, line in enumerate(lines, start=1):
-            parts = [p.strip() for p in line.split(",")]
-            label = f"{prefix} Line {line_num}" if prefix else f"Line {line_num}"
-            if len(parts) != 3:
-                errors.append(f"{label}: Expected 'Player, Goals, Assists', got '{line}'")
-                continue
-
-            name, goals_str, assists_str = parts
-            if not name:
-                errors.append(f"{label}: Player name cannot be empty.")
-                continue
-
-            try:
-                goals = int(goals_str)
-                assists = int(assists_str)
-                if goals < 0 or assists < 0:
-                    errors.append(f"{label}: Goals and assists cannot be negative.")
-                    continue
-            except ValueError:
-                errors.append(f"{label}: Goals and assists must be whole numbers.")
-                continue
-
-            candidates.append(
-                OCRPlayerCandidate(player=name, goals=goals, assists=assists, confidence_note="Manually edited")
-            )
-
-        return candidates, errors
+        return parse_modal_candidate_lines(text, prefix=prefix)
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         new_home_c, home_errs = self._parse_candidate_lines(self.home_stats_input.value, prefix="Home")
@@ -525,6 +529,12 @@ class MatchPreviewView(discord.ui.View):
 
             await interaction.edit_original_response(embed=success_embed, view=self)
             LOGGER.info("Match %s saved by user %s (%s)", match_id, interaction.user.name, interaction.user.id)
+        except PermissionError:
+            LOGGER.warning("Excel workbook locked during match save: %s", match_id)
+            await interaction.followup.send(
+                "⚠️ **Excel File Locked:** `data/matches.xlsx` is currently open in Microsoft Excel or another application. Please close the file and click **Confirm & Save** again.",
+                ephemeral=True,
+            )
         except Exception as exc:
             LOGGER.error("Failed to persist match %s: %s", match_id, exc)
             await interaction.followup.send(
@@ -554,6 +564,140 @@ class MatchPreviewView(discord.ui.View):
         for child in self.children:
             if isinstance(child, discord.ui.Button):
                 child.disabled = True
+
+
+class AddMatchTextModal(discord.ui.Modal, title="Edit Match Players, Stats & Result"):
+    """Modal allowing direct match entry via text without screenshot uploads."""
+
+    home_stats_input = discord.ui.TextInput(
+        label="Home Players: Name, Goals, Assists",
+        style=discord.TextStyle.paragraph,
+        placeholder="Skan, 2, 0\nLilly, 0, 1",
+        required=True,
+        max_length=500,
+    )
+
+    away_stats_input = discord.ui.TextInput(
+        label="Away Players: Name, Goals, Assists",
+        style=discord.TextStyle.paragraph,
+        placeholder="Suri, 1, 2\nAnnie, 2, 1",
+        required=False,
+        max_length=500,
+    )
+
+    scores_input = discord.ui.TextInput(
+        label="Home Score, Away Score (e.g. 4, 2)",
+        style=discord.TextStyle.short,
+        placeholder="2, 3",
+        required=False,
+        max_length=50,
+    )
+
+    teams_input = discord.ui.TextInput(
+        label="Home Team, Away Team (optional)",
+        style=discord.TextStyle.short,
+        placeholder="Skan & Lilly, Suri & Annie",
+        required=False,
+        max_length=100,
+    )
+
+    result_input = discord.ui.TextInput(
+        label="Result: Home Win, Away Win, or Draw",
+        style=discord.TextStyle.short,
+        placeholder="Away Win",
+        required=False,
+        max_length=20,
+    )
+
+    def __init__(self, excel_manager: ExcelManager) -> None:
+        super().__init__()
+        self.excel_manager = excel_manager
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        new_home_c, home_errs = parse_modal_candidate_lines(self.home_stats_input.value, prefix="Home")
+        new_away_c, away_errs = parse_modal_candidate_lines(self.away_stats_input.value, prefix="Away")
+        all_errors = home_errs + away_errs
+
+        if all_errors:
+            error_msg = "\n".join(all_errors[:5])
+            await interaction.response.send_message(
+                f"❌ **Validation Errors in Stats:**\n{error_msg}\n\nPlease run `/add-match-text` and try again.",
+                ephemeral=True,
+            )
+            return
+
+        h_team = "Home"
+        a_team = "Away"
+        teams_val = self.teams_input.value.strip()
+        if teams_val:
+            if "," in teams_val:
+                h_t, a_t = [t.strip() for t in teams_val.split(",", 1)]
+                if h_t:
+                    h_team = h_t
+                if a_t:
+                    a_team = a_t
+            else:
+                h_team = teams_val
+
+        scores_val = self.scores_input.value.strip()
+        h_score: Optional[int] = None
+        a_score: Optional[int] = None
+        if scores_val and "," in scores_val:
+            try:
+                hs_str, as_str = [s.strip() for s in scores_val.split(",", 1)]
+                h_score = int(hs_str)
+                a_score = int(as_str)
+            except ValueError:
+                h_score = sum(c.goals for c in new_home_c)
+                a_score = sum(a.goals for a in new_away_c)
+        else:
+            h_score = sum(c.goals for c in new_home_c)
+            a_score = sum(a.goals for a in new_away_c)
+
+        res_val = self.result_input.value.strip()
+        if res_val:
+            try:
+                res = MatchResult.from_str(res_val)
+            except ValueError:
+                await interaction.response.send_message(
+                    f"❌ Invalid result '{res_val}'. Must be Home Win, Away Win, or Draw.",
+                    ephemeral=True,
+                )
+                return
+        else:
+            if (h_score or 0) > (a_score or 0):
+                res = MatchResult.HOME_WIN
+            elif (h_score or 0) < (a_score or 0):
+                res = MatchResult.AWAY_WIN
+            else:
+                res = MatchResult.DRAW
+
+        preview_embed = build_preview_embed(
+            candidates=new_home_c,
+            result=res,
+            home_team=h_team,
+            away_team=a_team,
+            home_score=h_score,
+            away_score=a_score,
+            away_candidates=new_away_c,
+        )
+
+        score_note = f"Score: {h_team} {h_score} - {a_score} {a_team} ({res.value})"
+        view = MatchPreviewView(
+            submitting_user_id=interaction.user.id,
+            candidates=new_home_c,
+            result=res,
+            excel_manager=self.excel_manager,
+            image_hash="",
+            home_team=h_team,
+            away_team=a_team,
+            home_score=h_score,
+            away_score=a_score,
+            away_candidates=new_away_c,
+            notes=score_note,
+        )
+
+        await interaction.response.send_message(embed=preview_embed, view=view, ephemeral=True)
 
 
 class DeleteConfirmView(discord.ui.View):
@@ -613,6 +757,53 @@ class DeleteConfirmView(discord.ui.View):
 
         await interaction.response.edit_message(
             content="Deletion cancelled. Match remains intact.", embed=None, view=self
+        )
+
+
+class DeleteAllConfirmView(discord.ui.View):
+    """Confirmation dialog before wiping all match data."""
+
+    def __init__(
+        self,
+        submitting_user_id: int,
+        excel_manager: ExcelManager,
+        timeout: float = 60.0,
+    ) -> None:
+        super().__init__(timeout=timeout)
+        self.submitting_user_id = submitting_user_id
+        self.excel_manager = excel_manager
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.submitting_user_id:
+            await interaction.response.send_message("❌ You cannot authorize this action.", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="Confirm Delete All", style=discord.ButtonStyle.danger, emoji="💥")
+    async def confirm_delete_all(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await interaction.response.defer(ephemeral=True)
+        count = await self.excel_manager.delete_all_matches()
+
+        for child in self.children:
+            if isinstance(child, discord.ui.Button):
+                child.disabled = True
+
+        embed = discord.Embed(
+            title="💥 All Match Data Deleted",
+            description=f"Successfully wiped all **{count}** match records and associated statistics from the workbook.",
+            color=discord.Color.red(),
+        )
+        LOGGER.info("Admin %s executed delete_all_matches (%d matches wiped)", interaction.user.name, count)
+        await interaction.edit_original_response(embed=embed, view=self)
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary, emoji="↩️")
+    async def cancel_delete(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        for child in self.children:
+            if isinstance(child, discord.ui.Button):
+                child.disabled = True
+
+        await interaction.response.edit_message(
+            content="Action cancelled. All match records remain intact.", embed=None, view=self
         )
 
 
@@ -911,16 +1102,40 @@ def register_commands(
                 except OSError:
                     pass
 
+    # 1b. /add-match-text
+    @tree.command(
+        name="add-match-text",
+        description="Add match data and player statistics directly via text input.",
+    )
+    async def add_match_text(interaction: discord.Interaction) -> None:
+        err = check_guild_and_channel(interaction, config)
+        if err:
+            await interaction.response.send_message(f"❌ {err}", ephemeral=True)
+            return
+
+        modal = AddMatchTextModal(excel_manager=excel_manager)
+        await interaction.response.send_modal(modal)
+
     # 2. /delete-match
     @tree.command(
         name="delete-match",
         description="Permanently delete a match record and associated player statistics.",
     )
-    @app_commands.describe(match_id="The unique Match ID to delete (e.g. M-20261029-XXXXXX)")
-    async def delete_match(interaction: discord.Interaction, match_id: str) -> None:
+    @app_commands.describe(
+        match_id="The unique Match ID to delete (e.g. M-20261029-XXXXXX)",
+        password="Admin authorization password",
+    )
+    async def delete_match(interaction: discord.Interaction, match_id: str, password: str) -> None:
         err = check_guild_and_channel(interaction, config)
         if err:
             await interaction.response.send_message(f"❌ {err}", ephemeral=True)
+            return
+
+        if password.strip() != config.delete_password:
+            await interaction.response.send_message(
+                "❌ Invalid password. Action unauthorized.",
+                ephemeral=True,
+            )
             return
 
         if not is_user_admin(interaction, config):
@@ -954,6 +1169,47 @@ def register_commands(
         view = DeleteConfirmView(
             submitting_user_id=interaction.user.id,
             match_id=clean_id,
+            excel_manager=excel_manager,
+        )
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+    # 2b. /delete-all
+    @tree.command(
+        name="delete-all",
+        description="Permanently delete all matches and wipe stats from the workbook (Password protected).",
+    )
+    @app_commands.describe(password="Admin authorization password")
+    async def delete_all(interaction: discord.Interaction, password: str) -> None:
+        err = check_guild_and_channel(interaction, config)
+        if err:
+            await interaction.response.send_message(f"❌ {err}", ephemeral=True)
+            return
+
+        if password.strip() != config.delete_password:
+            await interaction.response.send_message(
+                "❌ Invalid password. Action unauthorized.",
+                ephemeral=True,
+            )
+            return
+
+        if not is_user_admin(interaction, config):
+            await interaction.response.send_message(
+                "❌ You do not have permission to delete match records. Only server admins or the designated admin role can perform deletions.",
+                ephemeral=True,
+            )
+            return
+
+        embed = discord.Embed(
+            title="⚠️ Confirm Wipe All Match Data",
+            description=(
+                "**DANGER:** Are you sure you want to permanently delete **ALL** match records and player statistics from the workbook?\n\n"
+                "This action cannot be undone. All career statistics, goals, assists, and leaderboards will be wiped clean."
+            ),
+            color=discord.Color.red(),
+        )
+
+        view = DeleteAllConfirmView(
+            submitting_user_id=interaction.user.id,
             excel_manager=excel_manager,
         )
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)

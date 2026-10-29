@@ -40,9 +40,15 @@ venv.bak/
 .env.*.local
 
 # Excel data (preserve .gitkeep)
+*.xlsx
+*.xlsm
+*.xls
+**/*.xlsx
+**/*.xlsm
 data/*.xlsx
 data/*.xlsm
 data/*.bak
+data/backups/
 !data/.gitkeep
 
 # Temporary files and uploads

@@ -28,6 +28,7 @@ class BotConfig:
     allowed_channel_id: Optional[int] = None
     admin_role_id: Optional[int] = None
     tesseract_cmd: Optional[str] = None
+    delete_password: str = "Skan6243"
     log_level: str = "INFO"
 
     @property
@@ -122,6 +123,7 @@ def load_config(env_path: Optional[str | Path] = None, require_token: bool = Tru
             raise ValueError(f"ADMIN_ROLE_ID must be an integer, got '{admin_role_raw}'") from exc
 
     tesseract_cmd = os.getenv("TESSERACT_CMD", "").strip() or None
+    delete_password = os.getenv("DELETE_PASSWORD", "Skan6243").strip() or "Skan6243"
     log_level = os.getenv("LOG_LEVEL", "INFO").strip().upper()
 
     return BotConfig(
@@ -132,5 +134,6 @@ def load_config(env_path: Optional[str | Path] = None, require_token: bool = Tru
         allowed_channel_id=allowed_channel_id,
         admin_role_id=admin_role_id,
         tesseract_cmd=tesseract_cmd,
+        delete_password=delete_password,
         log_level=log_level,
     )

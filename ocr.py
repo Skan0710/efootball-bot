@@ -123,11 +123,11 @@ def parse_player_columns_from_data(
         text = str(data["text"][i]).strip()
         conf = int(data["conf"][i]) if "conf" in data else 0
 
-        if not text or len(text) < 2 or conf < 30:
+        if not text or len(text) <= 3 or conf < 30:
             continue
 
         cleaned = re.sub(r"[^\w\-\.]", "", text)
-        if not cleaned or cleaned.lower() in excluded or cleaned.isdigit():
+        if not cleaned or len(cleaned) <= 3 or cleaned.lower() in excluded or cleaned.isdigit():
             continue
 
         x = int(data["left"][i])
@@ -197,46 +197,13 @@ def _extract_via_targeted_regions(
     h: int,
     w: int,
 ) -> Optional[OCRResult]:
-    """Extracts player stats by isolating the upper player bar and table rows."""
-    # 1. Player Bar: y = 0.05 to 0.23
-    pb_crop = bgr[int(h * 0.05):int(h * 0.23), :]
-    pb_gray = cv2.cvtColor(pb_crop, cv2.COLOR_BGR2GRAY)
-    pb_2x = cv2.resize(pb_gray, (0, 0), fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
-
-    try:
-        p_data = pytesseract.image_to_data(pb_2x, output_type=pytesseract.Output.DICT, config="--psm 6")
-    except Exception:
-        return None
-
-    excluded_words = {"next", "opposition", "match", "details", "team", "stats", "home", "away", "xi", "efootball"}
-    players: List[Tuple[str, int]] = []
+    """Extracts player stats focusing strictly on player names, goals, and assists."""
     scaled_w = w * 2
-
-    for i in range(len(p_data.get("text", []))):
-        t = str(p_data["text"][i]).strip()
-        c = int(p_data["conf"][i]) if "conf" in p_data else 0
-        if len(t) >= 2 and c > 30:
-            clean = re.sub(r"[^\w\-\.]", "", t)
-            if len(clean) >= 2 and clean.lower() not in excluded_words and not clean.isdigit():
-                cx = int(p_data["left"][i]) + (int(p_data["width"][i]) // 2)
-                # Ensure it's in the central band (avoid left logos and right edge bars)
-                if int(scaled_w * 0.18) <= cx <= int(scaled_w * 0.90):
-                    players.append((clean, cx))
-
-    # Deduplicate/merge very close horizontal tokens
-    merged_players: List[Tuple[str, int]] = []
-    for name, cx in sorted(players, key=lambda p: p[1]):
-        if not merged_players:
-            merged_players.append((name, cx))
-        else:
-            prev_name, prev_cx = merged_players[-1]
-            if abs(cx - prev_cx) < 140:
-                merged_players[-1] = (f"{prev_name} {name}", (prev_cx + cx) // 2)
-            else:
-                merged_players.append((name, cx))
-
-    if not merged_players:
-        return None
+    excluded_words = {
+        "next", "opposition", "match", "details", "team", "stats",
+        "home", "away", "xi", "xl", "efootball", "goals", "shots",
+        "assist", "assists", "passes", "target", "successful", "instrumental", "key"
+    }
 
     def _is_goals_text(txt: str) -> bool:
         t_low = txt.lower().strip()
@@ -252,9 +219,127 @@ def _extract_via_targeted_regions(
         t_low = txt.lower().strip()
         return "shot" in t_low or "shat" in t_low or "target" in t_low
 
-    # 2. Table Area: Multi-offset search
-    best_t_data: Optional[Dict[str, list]] = None
-    for offset in [0.22, 0.20, 0.23, 0.24, 0.21, 0.25, 0.26, 0.18]:
+    def _parse_candidate_stats(p_data: Dict[str, list], t_data: Dict[str, list], is_full: bool = False) -> Optional[List[OCRPlayerCandidate]]:
+        raw_players: List[Tuple[str, int]] = []
+        for i in range(len(p_data.get("text", []))):
+            t = str(p_data["text"][i]).strip()
+            c = int(p_data["conf"][i]) if "conf" in p_data else 0
+            if len(t) > 3 and c > 30:
+                clean = re.sub(r"[^\w\-\.]", "", t)
+                if len(clean) > 3 and clean.lower() not in excluded_words and not clean.isdigit():
+                    # Must contain at least 2 alphabet letters to exclude logos, symbols, or scores
+                    if not re.search(r"[a-zA-Z]{2,}", clean):
+                        continue
+                    cx = int(p_data["left"][i]) + (int(p_data["width"][i]) // 2)
+                    cy = int(p_data["top"][i])
+                    if int(scaled_w * 0.18) <= cx <= int(scaled_w * 0.90):
+                        if not is_full or cy < int(h * 2 * 0.35):
+                            raw_players.append((clean, cx))
+
+        merged_players: List[Tuple[str, int]] = []
+        for name, cx in sorted(raw_players, key=lambda p: p[1]):
+            if not merged_players:
+                merged_players.append((name, cx))
+            else:
+                prev_name, prev_cx = merged_players[-1]
+                if abs(cx - prev_cx) < 140:
+                    merged_players[-1] = (f"{prev_name} {name}", (prev_cx + cx) // 2)
+                else:
+                    merged_players.append((name, cx))
+
+        if not merged_players:
+            return None
+
+        # Row detection
+        goals_y: Optional[int] = None
+        shots_y: Optional[int] = None
+        assists_y: Optional[int] = None
+
+        for i in range(len(t_data.get("text", []))):
+            t = str(t_data["text"][i]).strip()
+            y = int(t_data["top"][i])
+            if _is_goals_text(t) and goals_y is None:
+                goals_y = y
+            if _is_shots_text(t) and shots_y is None:
+                shots_y = y
+            if _is_assists_text(t) and assists_y is None:
+                assists_y = y
+
+        # Use Shots (On Target) row as an anchor to deduce Assist row if text was obscured
+        if assists_y is None and shots_y is not None and goals_y is not None:
+            pitch = shots_y - goals_y
+            assists_y = shots_y + int(pitch * 1.55)
+
+        if goals_y is None or assists_y is None:
+            return None
+
+        def get_row_numbers(target_y: Optional[int], tol: int = 75) -> List[Tuple[int, int]]:
+            nums: List[Tuple[int, int]] = []
+            if target_y is None:
+                return nums
+            for j in range(len(t_data.get("text", []))):
+                t = str(t_data["text"][j]).strip()
+                y = int(t_data["top"][j])
+                x = int(t_data["left"][j])
+                w_b = int(t_data["width"][j])
+                cx = x + (w_b // 2)
+
+                if abs(y - target_y) <= tol:
+                    m = re.search(r"\b(\d+)\b", t) or re.search(r"(\d+)", t)
+                    if m:
+                        nums.append((int(m.group(1)), cx))
+                    elif t.lower() in ("o", "q", "d", "u") and len(t) == 1:
+                        nums.append((0, cx))
+            return nums
+
+        g_nums = get_row_numbers(goals_y)
+        a_nums = get_row_numbers(assists_y)
+
+        candidates: List[OCRPlayerCandidate] = []
+        max_col_dist = int(scaled_w * 0.20)  # ~400px in 2x scaled image
+
+        for name, pcx in merged_players:
+            valid_g = [gn for gn in g_nums if abs(gn[1] - pcx) <= max_col_dist]
+            g = min(valid_g, key=lambda it: abs(it[1] - pcx))[0] if valid_g else 0
+
+            valid_a = [an for an in a_nums if abs(an[1] - pcx) <= max_col_dist]
+            a = min(valid_a, key=lambda it: abs(it[1] - pcx))[0] if valid_a else 0
+
+            candidates.append(OCRPlayerCandidate(player=name, goals=g, assists=a, confidence_note="Targeted Extraction"))
+
+        return candidates
+
+    # 1. First attempt full 2x image (particularly effective for cropped/banner screenshots)
+    try:
+        gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+        g2x = cv2.resize(gray, (0, 0), fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+        t_full = pytesseract.image_to_data(g2x, output_type=pytesseract.Output.DICT, config="--psm 6")
+        full_candidates = _parse_candidate_stats(t_full, t_full, is_full=True)
+        if full_candidates and len(full_candidates) > 0 and sum(c.goals for c in full_candidates) > 0:
+            return OCRResult(
+                success=True,
+                candidates=full_candidates,
+                diagnostics={
+                    "method": "full_2x",
+                    "detected_players": [c.player for c in full_candidates],
+                    "goals_detected": [c.goals for c in full_candidates],
+                    "assists_detected": [c.assists for c in full_candidates],
+                },
+            )
+    except Exception as exc:
+        LOGGER.debug("Full 2x pass failed, continuing to sliced search: %s", exc)
+
+    # 2. Targeted Player Bar + Sliced Table search (for full 16:9 uncropped match screenshots)
+    pb_crop = bgr[int(h * 0.05):int(h * 0.25), :]
+    pb_gray = cv2.cvtColor(pb_crop, cv2.COLOR_BGR2GRAY)
+    pb_2x = cv2.resize(pb_gray, (0, 0), fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+
+    try:
+        p_data = pytesseract.image_to_data(pb_2x, output_type=pytesseract.Output.DICT, config="--psm 6")
+    except Exception:
+        return None
+
+    for offset in [0.22, 0.20, 0.23, 0.24, 0.21, 0.25, 0.18]:
         ta = bgr[int(h * offset):int(h * 0.86), :]
         ta_gray = cv2.cvtColor(ta, cv2.COLOR_BGR2GRAY)
         ta_2x = cv2.resize(ta_gray, (0, 0), fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
@@ -263,91 +348,20 @@ def _extract_via_targeted_regions(
         except Exception:
             continue
 
-        texts = [str(t_data["text"][j]).strip() for j in range(len(t_data.get("text", [])))]
-        has_g = any(_is_goals_text(txt) for txt in texts)
-        has_a = any(_is_assists_text(txt) for txt in texts)
-        if has_g and has_a:
-            best_t_data = t_data
-            break
-        elif (has_g or has_a) and best_t_data is None:
-            best_t_data = t_data
+        slice_candidates = _parse_candidate_stats(p_data, t_data, is_full=False)
+        if slice_candidates and len(slice_candidates) > 0 and sum(c.goals for c in slice_candidates) > 0:
+            return OCRResult(
+                success=True,
+                candidates=slice_candidates,
+                diagnostics={
+                    "method": f"slice_{offset}",
+                    "detected_players": [c.player for c in slice_candidates],
+                    "goals_detected": [c.goals for c in slice_candidates],
+                    "assists_detected": [c.assists for c in slice_candidates],
+                },
+            )
 
-    if not best_t_data:
-        return None
-
-    goals_y: Optional[int] = None
-    assists_y: Optional[int] = None
-    shots_y: Optional[int] = None
-
-    for i in range(len(best_t_data.get("text", []))):
-        t = str(best_t_data["text"][i]).strip()
-        y = int(best_t_data["top"][i])
-        if _is_goals_text(t) and goals_y is None:
-            goals_y = y
-        if _is_assists_text(t) and assists_y is None:
-            assists_y = y
-        if _is_shots_text(t) and shots_y is None:
-            shots_y = y
-
-    # Geometric fallback if assist text label was blurred/missing but row pitch is known
-    if assists_y is None and goals_y is not None:
-        if shots_y is not None and shots_y > goals_y:
-            # Assist row is situated after Shots (On Target) row
-            pitch = shots_y - goals_y
-            assists_y = shots_y + int(pitch * 1.55)
-        else:
-            # Approximate table row offset in scaled image
-            assists_y = goals_y + 195
-
-    if goals_y is None and assists_y is None:
-        return None
-
-    def get_row_numbers(target_y: Optional[int], tol: int = 70) -> List[Tuple[int, int]]:
-        nums: List[Tuple[int, int]] = []
-        if target_y is None:
-            return nums
-        for j in range(len(best_t_data.get("text", []))):
-            t = str(best_t_data["text"][j]).strip()
-            y = int(best_t_data["top"][j])
-            x = int(best_t_data["left"][j])
-            w_b = int(best_t_data["width"][j])
-            cx = x + (w_b // 2)
-
-            if abs(y - target_y) <= tol:
-                m = re.search(r"\b(\d+)\b", t) or re.search(r"(\d+)", t)
-                if m:
-                    nums.append((int(m.group(1)), cx))
-                elif t.lower() in ("o", "q", "d", "u") and len(t) == 1:
-                    nums.append((0, cx))
-        return nums
-
-    g_nums = get_row_numbers(goals_y)
-    a_nums = get_row_numbers(assists_y)
-
-    candidates: List[OCRPlayerCandidate] = []
-    max_col_dist = int(scaled_w * 0.20)  # ~400px in 2x scaled image
-
-    for name, pcx in merged_players:
-        # Match closest goal number within column bounds
-        valid_g = [gn for gn in g_nums if abs(gn[1] - pcx) <= max_col_dist]
-        g = min(valid_g, key=lambda it: abs(it[1] - pcx))[0] if valid_g else 0
-
-        # Match closest assist number within column bounds
-        valid_a = [an for an in a_nums if abs(an[1] - pcx) <= max_col_dist]
-        a = min(valid_a, key=lambda it: abs(it[1] - pcx))[0] if valid_a else 0
-
-        candidates.append(OCRPlayerCandidate(player=name, goals=g, assists=a, confidence_note="Targeted Crop"))
-
-    return OCRResult(
-        success=True,
-        candidates=candidates,
-        diagnostics={
-            "method": "targeted_regions",
-            "detected_players": [p[0] for p in merged_players],
-            "goals_detected": [gn[0] for gn in g_nums],
-            "assists_detected": [an[0] for an in a_nums],
-        },
-    )
+    return None
 
 
 def extract_player_stats_from_screenshot(

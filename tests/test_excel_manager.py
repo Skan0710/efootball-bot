@@ -39,7 +39,31 @@ async def test_workbook_initialization(tmp_path: Path) -> None:
     # Verify PlayerStats header row
     ws_players = wb[SHEET_PLAYER_STATS]
     headers_players = [cell.value for cell in ws_players[1]]
-    assert headers_players == ["MatchID", "Player", "Goals", "Assists", "Result"]
+    assert headers_players == [
+        "MatchID",
+        "Player",
+        "MatchesPlayed",
+        "Goals",
+        "Assists",
+        "G/A",
+        "GPG",
+        "APG",
+        "GAPG",
+    ]
+
+    # Verify Leaderboard header row (no Draws or DrawRate%)
+    ws_lb = wb[SHEET_LEADERBOARD]
+    headers_lb = [cell.value for cell in ws_lb[1]]
+    assert headers_lb == [
+        "Player",
+        "MatchesPlayed",
+        "Goals",
+        "Assists",
+        "Wins",
+        "Losses",
+        "WinRate%",
+        "LossRate%",
+    ]
     wb.close()
 
 
@@ -75,6 +99,15 @@ async def test_save_and_get_match(tmp_path: Path) -> None:
     skan = next(p for p in fetched.player_stats if p.player == "SkanRocky")
     assert skan.goals == 2
     assert skan.assists == 0
+
+    # Verify Excel formulas in PlayerStats sheet
+    wb = openpyxl.load_workbook(wb_path)
+    ws_p = wb[SHEET_PLAYER_STATS]
+    assert ws_p.cell(row=2, column=6).value == "=D2+E2"
+    assert ws_p.cell(row=2, column=7).value == "=IF(C2>0, D2/C2, 0)"
+    assert ws_p.cell(row=2, column=8).value == "=IF(C2>0, E2/C2, 0)"
+    assert ws_p.cell(row=2, column=9).value == "=G2+H2"
+    wb.close()
 
 
 @pytest.mark.asyncio

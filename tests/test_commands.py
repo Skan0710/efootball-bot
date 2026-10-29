@@ -40,7 +40,9 @@ def test_command_registration_names(test_config: BotConfig, tmp_path: Path) -> N
 
     expected_commands = {
         "add-match-image",
+        "add-match-text",
         "delete-match",
+        "delete-all",
         "leaderboard",
         "record",
         "matches",
@@ -342,4 +344,80 @@ async def test_home_and_away_win_outcomes_saved_to_excel(tmp_path: Path) -> None
     assert aggs2["alex"].losses == 1
     assert aggs2["bob"].wins == 1
     assert aggs2["bob"].losses == 1
+
+
+@pytest.mark.asyncio
+async def test_add_match_text_modal(tmp_path: Path) -> None:
+    """Verifies that AddMatchTextModal parses text inputs into a MatchPreviewView."""
+    from commands_handler import AddMatchTextModal
+
+    excel_file = tmp_path / "test_text_matches.xlsx"
+    manager = ExcelManager(excel_file)
+
+    modal = AddMatchTextModal(excel_manager=manager)
+    modal.home_stats_input._value = "Skan, 2, 0\nLilly, 0, 1"
+    modal.away_stats_input._value = "Suri, 1, 2\nAnnie, 2, 1"
+    modal.scores_input._value = "2, 3"
+    modal.teams_input._value = "Skan & Lilly, Suri & Annie"
+    modal.result_input._value = "Away Win"
+
+    interaction = MagicMock(spec=discord.Interaction)
+    interaction.user.id = 12345
+    interaction.response = MagicMock()
+    interaction.response.send_message = AsyncMock()
+
+    await modal.on_submit(interaction)
+
+    interaction.response.send_message.assert_called_once()
+    kwargs = interaction.response.send_message.call_args[1]
+    assert kwargs.get("ephemeral") is True
+    view = kwargs.get("view")
+    assert view is not None
+    assert len(view.candidates) == 2
+    assert view.candidates[0].player == "Skan"
+    assert view.candidates[0].goals == 2
+    assert view.candidates[0].assists == 0
+    assert len(view.away_candidates) == 2
+    assert view.away_candidates[0].player == "Suri"
+    assert view.home_score == 2
+    assert view.away_score == 3
+    assert view.result == MatchResult.AWAY_WIN
+
+
+@pytest.mark.asyncio
+async def test_delete_all_matches_flow(tmp_path: Path) -> None:
+    """Verifies DeleteAllConfirmView wipes all matches from the workbook."""
+    from commands_handler import DeleteAllConfirmView
+
+    excel_file = tmp_path / "test_delete_all.xlsx"
+    manager = ExcelManager(excel_file)
+
+    # Save a match first
+    match_rec = MatchRecord(
+        match_id="M-TEST-1",
+        date="2026-10-29",
+        result=MatchResult.WIN,
+        submitted_by="Admin",
+        screenshot_ref="hash1",
+        notes="Notes",
+        player_stats=[PlayerStat(player="Skan", goals=2, assists=1, result=MatchResult.WIN)],
+    )
+    await manager.save_match(match_rec)
+    matches_before = await manager.get_all_matches()
+    assert len(matches_before) == 1
+
+    # Wipe matches
+    view = DeleteAllConfirmView(submitting_user_id=999, excel_manager=manager)
+    interaction = MagicMock(spec=discord.Interaction)
+    interaction.user.id = 999
+    interaction.user.name = "AdminUser"
+    interaction.response = MagicMock()
+    interaction.response.defer = AsyncMock()
+    interaction.edit_original_response = AsyncMock()
+
+    await view.confirm_delete_all.callback(interaction)
+
+    matches_after = await manager.get_all_matches()
+    assert len(matches_after) == 0
+
 

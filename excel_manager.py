@@ -65,7 +65,17 @@ class ExcelManager:
 
         # 2. PlayerStats Sheet
         ws_players = wb.create_sheet(title=SHEET_PLAYER_STATS)
-        players_headers = ["MatchID", "Player", "Goals", "Assists", "Result"]
+        players_headers = [
+            "MatchID",
+            "Player",
+            "MatchesPlayed",
+            "Goals",
+            "Assists",
+            "G/A",
+            "GPG",
+            "APG",
+            "GAPG",
+        ]
         self._format_header(ws_players, players_headers)
 
         # 3. Dynamic Leaderboard Sheet
@@ -77,10 +87,8 @@ class ExcelManager:
             "Assists",
             "Wins",
             "Losses",
-            "Draws",
             "WinRate%",
             "LossRate%",
-            "DrawRate%",
         ]
         self._format_header(ws_lb, lb_headers)
 
@@ -179,21 +187,28 @@ class ExcelManager:
             # Append to PlayerStats sheet
             ws_players = wb[SHEET_PLAYER_STATS]
             for stat in match.player_stats:
+                new_p_row_idx = ws_players.max_row + 1
                 p_row = [
                     match.match_id,
                     stat.player,
+                    1,
                     int(stat.goals),
                     int(stat.assists),
-                    stat.result.value,
+                    f"=D{new_p_row_idx}+E{new_p_row_idx}",
+                    f"=IF(C{new_p_row_idx}>0, D{new_p_row_idx}/C{new_p_row_idx}, 0)",
+                    f"=IF(C{new_p_row_idx}>0, E{new_p_row_idx}/C{new_p_row_idx}, 0)",
+                    f"=G{new_p_row_idx}+H{new_p_row_idx}",
                 ]
                 ws_players.append(p_row)
-                new_p_row_idx = ws_players.max_row
                 for col_idx in range(1, len(p_row) + 1):
                     cell = ws_players.cell(row=new_p_row_idx, column=col_idx)
                     cell.font = DATA_FONT
                     cell.border = BORDER_THIN
-                    if col_idx in (1, 3, 4, 5):
+                    if col_idx in (1, 3, 4, 5, 6):
                         cell.alignment = Alignment(horizontal="center")
+                    elif col_idx in (7, 8, 9):
+                        cell.alignment = Alignment(horizontal="center")
+                        cell.number_format = "0.00"
 
             wb.save(self.workbook_path)
             LOGGER.info("Saved match %s with %d player rows", match.match_id, len(match.player_stats))
@@ -250,6 +265,41 @@ class ExcelManager:
         finally:
             wb.close()
 
+    async def delete_all_matches(self) -> int:
+        """Deletes all matches, player stats, and leaderboard rows atomically."""
+        async with self._lock:
+            return self._sync_delete_all_matches()
+
+    def _sync_delete_all_matches(self) -> int:
+        """Synchronous implementation of delete_all_matches."""
+        if not self.workbook_path.exists():
+            return 0
+
+        self.create_backup()
+        wb = openpyxl.load_workbook(self.workbook_path)
+        try:
+            ws_matches = wb[SHEET_MATCHES]
+            match_count = max(0, ws_matches.max_row - 1)
+
+            if ws_matches.max_row > 1:
+                ws_matches.delete_rows(2, ws_matches.max_row)
+
+            if SHEET_PLAYER_STATS in wb.sheetnames:
+                ws_players = wb[SHEET_PLAYER_STATS]
+                if ws_players.max_row > 1:
+                    ws_players.delete_rows(2, ws_players.max_row)
+
+            if SHEET_LEADERBOARD in wb.sheetnames:
+                ws_lb = wb[SHEET_LEADERBOARD]
+                if ws_lb.max_row > 1:
+                    ws_lb.delete_rows(2, ws_lb.max_row)
+
+            wb.save(self.workbook_path)
+            LOGGER.info("Deleted all %d matches from workbook.", match_count)
+            return match_count
+        finally:
+            wb.close()
+
     async def get_match(self, match_id: str) -> Optional[MatchRecord]:
         """Retrieves a specific match record and its associated player stats."""
         async with self._lock:
@@ -288,18 +338,17 @@ class ExcelManager:
                 if not row or not row[0]:
                     continue
                 if str(row[0]).strip() == match_id.strip():
-                    player_name = str(row[1]).strip() if len(row) > 1 and row[1] else "Unknown"
-                    goals = int(row[2]) if len(row) > 2 and row[2] is not None else 0
-                    assists = int(row[3]) if len(row) > 3 and row[3] is not None else 0
-                    res = MatchResult.from_str(str(row[4])) if len(row) > 4 and row[4] else match_data["result"]
-                    player_stats.append(
-                        PlayerStat(
-                            player=player_name,
-                            goals=goals,
-                            assists=assists,
-                            result=res,
+                    parsed = self._parse_player_stat_row(row, match_data["result"], match_data["notes"])
+                    if parsed:
+                        p_name, goals, assists, res = parsed
+                        player_stats.append(
+                            PlayerStat(
+                                player=p_name,
+                                goals=goals,
+                                assists=assists,
+                                result=res,
+                            )
                         )
-                    )
 
             return MatchRecord(
                 match_id=match_data["match_id"],
@@ -327,21 +376,8 @@ class ExcelManager:
             ws_matches = wb[SHEET_MATCHES]
             ws_players = wb[SHEET_PLAYER_STATS]
 
-            # Index player stats by match_id
-            player_stats_map: Dict[str, List[PlayerStat]] = {}
-            for row in ws_players.iter_rows(min_row=2, values_only=True):
-                if not row or not row[0]:
-                    continue
-                m_id = str(row[0]).strip()
-                p_name = str(row[1]).strip() if len(row) > 1 and row[1] else "Unknown"
-                goals = int(row[2]) if len(row) > 2 and row[2] is not None else 0
-                assists = int(row[3]) if len(row) > 3 and row[3] is not None else 0
-                res = MatchResult.from_str(str(row[4])) if len(row) > 4 and row[4] else MatchResult.WIN
-                player_stats_map.setdefault(m_id, []).append(
-                    PlayerStat(player=p_name, goals=goals, assists=assists, result=res)
-                )
-
-            matches: List[MatchRecord] = []
+            # Index matches by match_id
+            matches_info: Dict[str, dict] = {}
             for row in ws_matches.iter_rows(min_row=2, values_only=True):
                 if not row or not row[0]:
                     continue
@@ -351,15 +387,38 @@ class ExcelManager:
                 sub_by = str(row[3]) if len(row) > 3 and row[3] else "Unknown"
                 screen = str(row[4]) if len(row) > 4 and row[4] else ""
                 notes = str(row[5]) if len(row) > 5 and row[5] else ""
+                matches_info[m_id] = {
+                    "date": date_val,
+                    "result": res,
+                    "submitted_by": sub_by,
+                    "screenshot_ref": screen,
+                    "notes": notes,
+                }
 
+            # Index player stats by match_id
+            player_stats_map: Dict[str, List[PlayerStat]] = {}
+            for row in ws_players.iter_rows(min_row=2, values_only=True):
+                if not row or not row[0]:
+                    continue
+                m_id = str(row[0]).strip()
+                m_info = matches_info.get(m_id, {"result": MatchResult.WIN, "notes": ""})
+                parsed = self._parse_player_stat_row(row, m_info["result"], m_info["notes"])
+                if parsed:
+                    p_name, goals, assists, res = parsed
+                    player_stats_map.setdefault(m_id, []).append(
+                        PlayerStat(player=p_name, goals=goals, assists=assists, result=res)
+                    )
+
+            matches: List[MatchRecord] = []
+            for m_id, info in matches_info.items():
                 matches.append(
                     MatchRecord(
                         match_id=m_id,
-                        date=date_val,
-                        result=res,
-                        submitted_by=sub_by,
-                        screenshot_ref=screen,
-                        notes=notes,
+                        date=info["date"],
+                        result=info["result"],
+                        submitted_by=info["submitted_by"],
+                        screenshot_ref=info["screenshot_ref"],
+                        notes=info["notes"],
                         player_stats=player_stats_map.get(m_id, []),
                     )
                 )
@@ -373,31 +432,92 @@ class ExcelManager:
         async with self._lock:
             return self._sync_get_all_player_stats()
 
+    @staticmethod
+    def _parse_player_stat_row(
+        row: tuple, default_result: MatchResult, notes: str = ""
+    ) -> Optional[Tuple[str, int, int, MatchResult]]:
+        """Safely parses player stat row supporting both new format and legacy format."""
+        if not row or not row[0]:
+            return None
+        p_name = str(row[1]).strip() if len(row) > 1 and row[1] else "Unknown"
+        if not p_name or p_name.lower() in ("unknown", ""):
+            return None
+
+        # Check if legacy format (Col 4 was Result string)
+        is_legacy = False
+        if len(row) >= 5 and isinstance(row[4], str):
+            try:
+                MatchResult.from_str(str(row[4]))
+                is_legacy = True
+            except ValueError:
+                is_legacy = False
+
+        if is_legacy:
+            goals = int(row[2]) if len(row) > 2 and row[2] is not None else 0
+            assists = int(row[3]) if len(row) > 3 and row[3] is not None else 0
+            res = MatchResult.from_str(str(row[4])) if len(row) > 4 and row[4] else default_result
+        else:
+            # New format: Col 2 is MatchesPlayed (1), Col 3 is Goals, Col 4 is Assists
+            goals = int(row[3]) if len(row) > 3 and row[3] is not None else 0
+            assists = int(row[4]) if len(row) > 4 and row[4] is not None else 0
+
+            # Determine player's individual result from match outcome & team notes
+            is_away = False
+            if notes:
+                notes_lower = notes.lower()
+                p_lower = p_name.lower()
+                if "vs" in notes_lower:
+                    _, away_part = notes_lower.split("vs", 1)
+                    is_away = p_lower in away_part
+                elif "-" in notes_lower:
+                    _, away_part = notes_lower.split("-", 1)
+                    is_away = p_lower in away_part
+                elif "away" in notes_lower or "opponent" in notes_lower:
+                    is_away = True
+
+            if default_result in (MatchResult.HOME_WIN, MatchResult.WIN):
+                res = MatchResult.LOSS if is_away else MatchResult.WIN
+            elif default_result in (MatchResult.AWAY_WIN, MatchResult.LOSS):
+                res = MatchResult.WIN if is_away else MatchResult.LOSS
+            else:
+                res = MatchResult.DRAW
+
+        return p_name, goals, assists, res
+
     def _sync_get_all_player_stats(self) -> List[PlayerStat]:
         if not self.workbook_path.exists():
             return []
 
         wb = openpyxl.load_workbook(self.workbook_path, data_only=True)
         try:
+            ws_matches = wb[SHEET_MATCHES]
             ws_players = wb[SHEET_PLAYER_STATS]
+
+            matches_map: Dict[str, Tuple[MatchResult, str]] = {}
+            for row in ws_matches.iter_rows(min_row=2, values_only=True):
+                if row and row[0]:
+                    m_id = str(row[0]).strip()
+                    res = MatchResult.from_str(str(row[2])) if len(row) > 2 and row[2] else MatchResult.WIN
+                    notes = str(row[5]) if len(row) > 5 and row[5] else ""
+                    matches_map[m_id] = (res, notes)
+
             stats: List[PlayerStat] = []
             for row in ws_players.iter_rows(min_row=2, values_only=True):
                 if not row or not row[0]:
                     continue
-                p_name = str(row[1]).strip() if len(row) > 1 and row[1] else ""
-                if not p_name:
-                    continue
-                goals = int(row[2]) if len(row) > 2 and row[2] is not None else 0
-                assists = int(row[3]) if len(row) > 3 and row[3] is not None else 0
-                res = MatchResult.from_str(str(row[4])) if len(row) > 4 and row[4] else MatchResult.WIN
-                stats.append(
-                    PlayerStat(
-                        player=p_name,
-                        goals=goals,
-                        assists=assists,
-                        result=res,
+                m_id = str(row[0]).strip()
+                default_res, notes = matches_map.get(m_id, (MatchResult.WIN, ""))
+                parsed = self._parse_player_stat_row(row, default_res, notes)
+                if parsed:
+                    p_name, goals, assists, res = parsed
+                    stats.append(
+                        PlayerStat(
+                            player=p_name,
+                            goals=goals,
+                            assists=assists,
+                            result=res,
+                        )
                     )
-                )
             return stats
         finally:
             wb.close()
@@ -424,14 +544,13 @@ class ExcelManager:
                 "Assists",
                 "Wins",
                 "Losses",
-                "Draws",
                 "WinRate%",
                 "LossRate%",
-                "DrawRate%",
             ]
             self._format_header(ws_lb, lb_headers)
 
             for agg in aggregates:
+                curr_row = ws_lb.max_row + 1
                 row_data = [
                     agg.player,
                     agg.matches_played,
@@ -439,19 +558,18 @@ class ExcelManager:
                     agg.assists,
                     agg.wins,
                     agg.losses,
-                    agg.draws,
-                    agg.win_rate,
-                    agg.loss_rate,
-                    agg.draw_rate,
+                    f"=IF(B{curr_row}>0, (E{curr_row}/B{curr_row})*100, 0)",
+                    f"=IF(B{curr_row}>0, (F{curr_row}/B{curr_row})*100, 0)",
                 ]
                 ws_lb.append(row_data)
-                curr_row = ws_lb.max_row
                 for col_idx in range(1, len(row_data) + 1):
                     cell = ws_lb.cell(row=curr_row, column=col_idx)
                     cell.font = DATA_FONT
                     cell.border = BORDER_THIN
                     if col_idx >= 2:
                         cell.alignment = Alignment(horizontal="center")
+                    if col_idx in (7, 8):
+                        cell.number_format = '0.0"%"'
 
             wb.save(self.workbook_path)
         finally:
