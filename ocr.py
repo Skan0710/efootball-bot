@@ -26,13 +26,12 @@ LOGGER = logging.getLogger("efootball_bot.ocr")
 class LayoutConfig:
     """Configurable layout ratios for eFootball match details screen."""
 
-    # Relative coordinates (0.0 - 1.0) for regions of interest in normalized resolution
-    player_names_top: float = 0.18
-    player_names_bottom: float = 0.35
-    stats_table_top: float = 0.35
-    stats_table_bottom: float = 0.85
-    player_cols_left: float = 0.28
-    player_cols_right: float = 0.95
+    player_names_top: float = 0.05
+    player_names_bottom: float = 0.25
+    stats_table_top: float = 0.20
+    stats_table_bottom: float = 0.88
+    player_cols_left: float = 0.20
+    player_cols_right: float = 0.90
 
 
 @dataclass
@@ -81,10 +80,7 @@ def validate_image_file(
 
 def preprocess_image_for_ocr(bgr_image: np.ndarray) -> np.ndarray:
     """Preprocesses image using OpenCV to improve text contrast and OCR legibility."""
-    # Convert to grayscale
     gray = cv2.cvtColor(bgr_image, cv2.COLOR_BGR2GRAY)
-
-    # Resize to normalized width (1920px standard) if different, maintaining aspect ratio
     target_width = 1920
     h, w = gray.shape
     if w != target_width:
@@ -92,18 +88,12 @@ def preprocess_image_for_ocr(bgr_image: np.ndarray) -> np.ndarray:
         target_height = int(h * scaling_factor)
         gray = cv2.resize(gray, (target_width, target_height), interpolation=cv2.INTER_CUBIC)
 
-    # Contrast Limited Adaptive Histogram Equalization (CLAHE)
     clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
     enhanced = clahe.apply(gray)
-
-    # Bilateral filter to reduce noise while keeping font edges crisp
     denoised = cv2.bilateralFilter(enhanced, d=5, sigmaColor=75, sigmaSpace=75)
-
-    # Adaptive thresholding
     thresh = cv2.adaptiveThreshold(
         denoised, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 15, 4
     )
-
     return thresh
 
 
@@ -112,7 +102,6 @@ def _configure_tesseract(tesseract_cmd: Optional[str] = None) -> None:
     if tesseract_cmd and Path(tesseract_cmd).exists():
         pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
     elif not pytesseract.pytesseract.tesseract_cmd or pytesseract.pytesseract.tesseract_cmd == "tesseract":
-        # Check standard Windows path
         win_default = Path(r"C:\Program Files\Tesseract-OCR\tesseract.exe")
         if win_default.exists():
             pytesseract.pytesseract.tesseract_cmd = str(win_default)
@@ -125,46 +114,38 @@ def parse_player_columns_from_data(
     y_min: int,
     y_max: int,
 ) -> List[Tuple[str, int, int]]:
-    """Identifies player names and their horizontal column centers.
-
-    Returns list of tuples: (player_name, center_x, width) sorted left to right.
-    """
+    """Identifies player names and their horizontal column centers."""
     n_boxes = len(data.get("text", []))
     candidates: List[Tuple[str, int, int]] = []
+    excluded = {"next", "opposition", "match", "details", "team", "stats", "home", "away", "xi"}
 
     for i in range(n_boxes):
         text = str(data["text"][i]).strip()
         conf = int(data["conf"][i]) if "conf" in data else 0
 
-        # Filter out empty or noise tokens
         if not text or len(text) < 2 or conf < 30:
             continue
 
-        # Clean noise characters
         cleaned = re.sub(r"[^\w\-\.]", "", text)
-        if not cleaned:
+        if not cleaned or cleaned.lower() in excluded or cleaned.isdigit():
             continue
 
         x = int(data["left"][i])
         y = int(data["top"][i])
         w = int(data["width"][i])
-        h = int(data["height"][i])
 
         if x_min <= x <= x_max and y_min <= y <= y_max:
             center_x = x + (w // 2)
             candidates.append((cleaned, center_x, w))
 
-    # Sort candidates by x coordinate
     candidates.sort(key=lambda c: c[1])
 
-    # Merge words that are very close horizontally (same player name consisting of multiple words)
     merged: List[Tuple[str, int, int]] = []
     for name, cx, w in candidates:
         if not merged:
             merged.append((name, cx, w))
         else:
             prev_name, prev_cx, prev_w = merged[-1]
-            # If horizontal distance is small (less than 120px in 1080p), merge into one player name
             if abs(cx - prev_cx) < 120:
                 merged[-1] = (f"{prev_name} {name}", (prev_cx + cx) // 2, prev_w + w)
             else:
@@ -186,12 +167,10 @@ def find_row_numbers_by_columns(
 
     for i in range(n_boxes):
         text = str(data["text"][i]).strip()
-        if not text or not text.isdigit():
-            # Check if text is like "0" or "1" with punctuation
-            digits = re.findall(r"\d+", text)
-            if not digits:
-                continue
-            text = digits[0]
+        m = re.match(r"^(\d+)", text)
+        if not m:
+            continue
+        val = int(m.group(1))
 
         x = int(data["left"][i])
         y = int(data["top"][i])
@@ -199,9 +178,6 @@ def find_row_numbers_by_columns(
 
         if row_y_min <= y <= row_y_max:
             item_center_x = x + (w // 2)
-            val = int(text)
-
-            # Find closest player column
             best_col = -1
             best_dist = float("inf")
             for col_idx, col_cx in enumerate(column_centers):
@@ -214,6 +190,125 @@ def find_row_numbers_by_columns(
                 col_values[best_col] = val
 
     return col_values
+
+
+def _extract_via_targeted_regions(
+    bgr: np.ndarray,
+    h: int,
+    w: int,
+) -> Optional[OCRResult]:
+    """Extracts player stats by isolating the upper player bar and table rows."""
+    # 1. Player Bar: y = 0.05 to 0.23
+    pb_crop = bgr[int(h * 0.05):int(h * 0.23), :]
+    pb_gray = cv2.cvtColor(pb_crop, cv2.COLOR_BGR2GRAY)
+    pb_2x = cv2.resize(pb_gray, (0, 0), fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+
+    try:
+        p_data = pytesseract.image_to_data(pb_2x, output_type=pytesseract.Output.DICT, config="--psm 6")
+    except Exception:
+        return None
+
+    excluded_words = {"next", "opposition", "match", "details", "team", "stats", "home", "away", "xi", "efootball"}
+    players: List[Tuple[str, int]] = []
+    scaled_w = w * 2
+
+    for i in range(len(p_data.get("text", []))):
+        t = str(p_data["text"][i]).strip()
+        c = int(p_data["conf"][i]) if "conf" in p_data else 0
+        if len(t) >= 3 and c > 35:
+            clean = re.sub(r"[^\w\-\.]", "", t)
+            if len(clean) >= 3 and clean.lower() not in excluded_words and not clean.isdigit():
+                cx = int(p_data["left"][i]) + (int(p_data["width"][i]) // 2)
+                # Ensure it's in the central band (avoid left logos and right edge bars)
+                if int(scaled_w * 0.18) <= cx <= int(scaled_w * 0.90):
+                    players.append((clean, cx))
+
+    # Deduplicate/merge very close horizontal tokens
+    merged_players: List[Tuple[str, int]] = []
+    for name, cx in sorted(players, key=lambda p: p[1]):
+        if not merged_players:
+            merged_players.append((name, cx))
+        else:
+            prev_name, prev_cx = merged_players[-1]
+            if abs(cx - prev_cx) < 140:
+                merged_players[-1] = (f"{prev_name} {name}", (prev_cx + cx) // 2)
+            else:
+                merged_players.append((name, cx))
+
+    if not merged_players:
+        return None
+
+    # 2. Table Area: Multi-offset search
+    best_t_data: Optional[Dict[str, list]] = None
+    for offset in [0.22, 0.23, 0.21, 0.24, 0.20, 0.25]:
+        ta = bgr[int(h * offset):int(h * 0.86), :]
+        ta_gray = cv2.cvtColor(ta, cv2.COLOR_BGR2GRAY)
+        ta_2x = cv2.resize(ta_gray, (0, 0), fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+        try:
+            t_data = pytesseract.image_to_data(ta_2x, output_type=pytesseract.Output.DICT, config="--psm 6")
+        except Exception:
+            continue
+
+        texts = [str(t_data["text"][j]).strip().lower() for j in range(len(t_data.get("text", [])))]
+        has_g = any("goal" in txt for txt in texts)
+        has_a = any("assist" in txt for txt in texts)
+        if has_g and has_a:
+            best_t_data = t_data
+            break
+        elif has_g and best_t_data is None:
+            best_t_data = t_data
+
+    if not best_t_data:
+        return None
+
+    goals_y: Optional[int] = None
+    assists_y: Optional[int] = None
+
+    for i in range(len(best_t_data.get("text", []))):
+        t = str(best_t_data["text"][i]).strip().lower()
+        y = int(best_t_data["top"][i])
+        if "goal" in t and goals_y is None:
+            goals_y = y
+        if "assist" in t and assists_y is None:
+            assists_y = y
+
+    if goals_y is None and assists_y is None:
+        return None
+
+    def get_row_numbers(target_y: Optional[int], tol: int = 50) -> List[Tuple[int, int]]:
+        nums: List[Tuple[int, int]] = []
+        if target_y is None:
+            return nums
+        for j in range(len(best_t_data.get("text", []))):
+            t = str(best_t_data["text"][j]).strip()
+            y = int(best_t_data["top"][j])
+            x = int(best_t_data["left"][j])
+            w_b = int(best_t_data["width"][j])
+            cx = x + (w_b // 2)
+            m = re.match(r"^(\d+)", t)
+            if abs(y - target_y) <= tol and m:
+                nums.append((int(m.group(1)), cx))
+        return nums
+
+    g_nums = get_row_numbers(goals_y)
+    a_nums = get_row_numbers(assists_y)
+
+    candidates: List[OCRPlayerCandidate] = []
+    for name, pcx in merged_players:
+        g = min(g_nums, key=lambda it: abs(it[1] - pcx))[0] if g_nums else 0
+        a = min(a_nums, key=lambda it: abs(it[1] - pcx))[0] if a_nums else 0
+        candidates.append(OCRPlayerCandidate(player=name, goals=g, assists=a, confidence_note="Targeted Crop"))
+
+    return OCRResult(
+        success=True,
+        candidates=candidates,
+        diagnostics={
+            "method": "targeted_regions",
+            "detected_players": [p[0] for p in merged_players],
+            "goals_detected": [gn[0] for gn in g_nums],
+            "assists_detected": [an[0] for an in a_nums],
+        },
+    )
 
 
 def extract_player_stats_from_screenshot(
@@ -240,17 +335,23 @@ def extract_player_stats_from_screenshot(
 
     height, width, _ = bgr.shape
 
-    # Preprocess
+    # 1. First try high-accuracy targeted regions (matches real eFootball mobile/console Details screens)
+    try:
+        targeted_res = _extract_via_targeted_regions(bgr, height, width)
+        if targeted_res and targeted_res.success and len(targeted_res.candidates) > 0:
+            LOGGER.info("Successfully extracted %d players via targeted regions", len(targeted_res.candidates))
+            return targeted_res
+    except Exception as exc:
+        LOGGER.warning("Targeted extraction encountered error, attempting fallback: %s", exc)
+
+    # 2. Fallback to full-image preprocessing and column matching
     try:
         processed = preprocess_image_for_ocr(bgr)
     except Exception as exc:
         LOGGER.error("Image preprocessing error: %s", exc)
         return OCRResult(success=False, error_reason=f"Image preprocessing failed: {exc}")
 
-    # Scaled dimensions (normalized reference width = 1920)
     proc_h, proc_w = processed.shape
-
-    # Bounding boxes for player name band and statistics area
     p_ymin = int(proc_h * cfg.player_names_top)
     p_ymax = int(proc_h * cfg.player_names_bottom)
     s_ymin = int(proc_h * cfg.stats_table_top)
@@ -268,7 +369,6 @@ def extract_player_stats_from_screenshot(
     }
 
     try:
-        # Run Tesseract with data dictionary
         ocr_data = pytesseract.image_to_data(
             processed,
             output_type=pytesseract.Output.DICT,
@@ -280,7 +380,7 @@ def extract_player_stats_from_screenshot(
         return OCRResult(
             success=False,
             error_reason=(
-                "Tesseract OCR executable was not found. Please install Tesseract "
+                "Tesseract OCR executable was not found. Please verify Tesseract is installed "
                 "or specify TESSERACT_CMD in your .env file."
             ),
             diagnostics=diagnostics,
@@ -293,7 +393,6 @@ def extract_player_stats_from_screenshot(
             diagnostics=diagnostics,
         )
 
-    # 1. Detect Player Columns
     player_cols = parse_player_columns_from_data(ocr_data, x_min, x_max, p_ymin, p_ymax)
     diagnostics["detected_player_columns"] = [
         {"player": p[0], "center_x": p[1]} for p in player_cols
@@ -311,9 +410,6 @@ def extract_player_stats_from_screenshot(
         )
 
     column_centers = [p[1] for p in player_cols]
-    num_players = len(player_cols)
-
-    # 2. Locate Goals and Assists rows
     n_boxes = len(ocr_data.get("text", []))
     goals_row_y: Optional[int] = None
     assists_row_y: Optional[int] = None
@@ -332,8 +428,7 @@ def extract_player_stats_from_screenshot(
 
     goals_by_col: Dict[int, int] = {}
     assists_by_col: Dict[int, int] = {}
-
-    row_tolerance = 45  # vertical tolerance around detected row label
+    row_tolerance = 50
 
     if goals_row_y is not None:
         goals_by_col = find_row_numbers_by_columns(
@@ -350,27 +445,19 @@ def extract_player_stats_from_screenshot(
             column_centers,
         )
 
-    diagnostics["goals_by_col"] = goals_by_col
-    diagnostics["assists_by_col"] = assists_by_col
-
-    # 3. Validate consistency across all columns
     candidates: List[OCRPlayerCandidate] = []
-    missing_data = False
-
     for idx, (player_name, cx, _) in enumerate(player_cols):
         g = goals_by_col.get(idx, 0)
         a = assists_by_col.get(idx, 0)
-        # If we failed to find row positions at all, note confidence
         conf_note = "High" if (goals_row_y is not None and assists_row_y is not None) else "Low"
         candidates.append(OCRPlayerCandidate(player=player_name, goals=g, assists=a, confidence_note=conf_note))
 
-    # Consistency check: If neither goals nor assists row was found, fail safely
     if goals_row_y is None and assists_row_y is None:
         return OCRResult(
             success=False,
             candidates=candidates,
             error_reason=(
-                "Could not locate 'Goals' or 'Assists' rows in screenshot. Please verify or manually edit stats."
+                "Could not locate 'Goals' or 'Assist' rows in screenshot. Please verify or manually edit stats."
             ),
             raw_text=raw_full_text,
             diagnostics=diagnostics,

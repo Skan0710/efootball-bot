@@ -9,19 +9,32 @@ from typing import List, Optional
 
 
 class MatchResult(str, Enum):
-    """Result of an eFootball match from the perspective of the submitting co-op team."""
+    """Result of an eFootball match."""
 
+    HOME_WIN = "Home Win"
+    AWAY_WIN = "Away Win"
+    DRAW = "Draw"
     WIN = "Win"
     LOSS = "Loss"
-    DRAW = "Draw"
 
     @classmethod
     def from_str(cls, value: str) -> MatchResult:
-        normalized = value.strip().capitalize()
+        normalized = value.strip().lower()
+        if normalized == "home win":
+            return cls.HOME_WIN
+        elif normalized == "away win":
+            return cls.AWAY_WIN
+        elif normalized == "win":
+            return cls.WIN
+        elif normalized == "loss":
+            return cls.LOSS
+        elif normalized == "draw":
+            return cls.DRAW
+
         for member in cls:
-            if member.value == normalized:
+            if member.value.lower() == normalized:
                 return member
-        raise ValueError(f"Invalid match result '{value}'. Must be Win, Loss, or Draw.")
+        raise ValueError(f"Invalid match result '{value}'. Must be Home Win, Away Win, or Draw.")
 
 
 class LeaderboardCategory(str, Enum):

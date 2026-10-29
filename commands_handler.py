@@ -111,6 +111,8 @@ def is_user_admin(interaction: discord.Interaction, config: BotConfig) -> bool:
 def build_preview_embed(
     candidates: List[OCRPlayerCandidate],
     result: MatchResult,
+    home_team: str = "Home",
+    away_team: str = "Away",
     home_score: Optional[int] = None,
     away_score: Optional[int] = None,
     away_candidates: Optional[List[OCRPlayerCandidate]] = None,
@@ -119,11 +121,11 @@ def build_preview_embed(
     """Builds the ephemeral verification embed for post-match statistics."""
     color = (
         discord.Color.green()
-        if result == MatchResult.WIN
-        else (discord.Color.red() if result == MatchResult.LOSS else discord.Color.gold())
+        if result in (MatchResult.HOME_WIN, MatchResult.WIN)
+        else (discord.Color.red() if result in (MatchResult.AWAY_WIN, MatchResult.LOSS) else discord.Color.gold())
     )
 
-    title_score = f" — Score: {home_score} - {away_score}" if (home_score is not None and away_score is not None) else ""
+    title_score = f" ({home_score} - {away_score})" if (home_score is not None and away_score is not None) else ""
     embed = discord.Embed(
         title=f"Match Preview — Result: {result.value}{title_score}",
         description=(
@@ -134,16 +136,19 @@ def build_preview_embed(
         timestamp=datetime.now(),
     )
 
-    if home_score is not None and away_score is not None:
-        embed.add_field(
-            name="🏟️ Match Score (Home vs Away)",
-            value=(
-                f"🏠 **Home (1st Image):** `{home_score}`\n"
-                f"✈️ **Away (2nd Image):** `{away_score}`\n"
-                f"Outcome: **{result.value}**"
-            ),
-            inline=False,
-        )
+    # Matchup & Scores
+    h_display = home_score if home_score is not None else 0
+    a_display = away_score if away_score is not None else 0
+    embed.add_field(
+        name="🏟️ Match Overview",
+        value=(
+            f"**{home_team}** vs **{away_team}**\n"
+            f"🏠 **{home_team} Score:** `{h_display}`\n"
+            f"✈️ **{away_team} Score:** `{a_display}`\n"
+            f"🏆 **Outcome:** **{result.value}**"
+        ),
+        inline=False,
+    )
 
     if not candidates:
         embed.add_field(
@@ -154,7 +159,7 @@ def build_preview_embed(
     else:
         for c in candidates:
             embed.add_field(
-                name=f"⚽ {c.player} (Home)",
+                name=f"⚽ {c.player} ({home_team})",
                 value=f"**Goals:** {c.goals} | **Assists:** {c.assists}",
                 inline=True,
             )
@@ -162,7 +167,7 @@ def build_preview_embed(
     if away_candidates:
         away_summary = ", ".join(f"{a.player} ({a.goals}G)" for a in away_candidates) or "None detected"
         embed.add_field(
-            name="✈️ Opponent Players (Away Team)",
+            name=f"✈️ Opponent Players ({away_team})",
             value=away_summary[:1024],
             inline=False,
         )
@@ -179,30 +184,38 @@ def build_preview_embed(
 
 
 class EditStatsModal(discord.ui.Modal, title="Edit Match Player Stats & Result"):
-    """Modal allowing manual correction of player names, goals, assists, and match outcome."""
+    """Modal allowing manual correction of player names, goals, assists, scores, and result."""
 
     stats_input = discord.ui.TextInput(
-        label="Format: Player, Goals, Assists (one per line)",
+        label="Player, Goals, Assists (one per line)",
         style=discord.TextStyle.paragraph,
-        placeholder="SkanRocky, 2, 0\nlillym, 0, 1",
+        placeholder="SkanRocky, 3, 1\nSuriBG6, 1, 2",
         required=True,
         max_length=1000,
     )
 
-    result_input = discord.ui.TextInput(
-        label="Result: Win, Loss, or Draw (optional)",
+    scores_input = discord.ui.TextInput(
+        label="Home Score, Away Score (e.g. 4, 2)",
         style=discord.TextStyle.short,
-        placeholder="Win",
+        placeholder="4, 2",
         required=False,
-        max_length=10,
+        max_length=50,
     )
 
-    score_input = discord.ui.TextInput(
-        label="Score / Notes (optional, e.g. 2-1)",
+    teams_input = discord.ui.TextInput(
+        label="Home Team, Away Team (optional)",
         style=discord.TextStyle.short,
-        placeholder="2-1",
+        placeholder="Home, Away",
         required=False,
         max_length=100,
+    )
+
+    result_input = discord.ui.TextInput(
+        label="Result: Home Win, Away Win, or Draw",
+        style=discord.TextStyle.short,
+        placeholder="Home Win",
+        required=False,
+        max_length=20,
     )
 
     def __init__(self, parent_view: MatchPreviewView) -> None:
@@ -211,10 +224,15 @@ class EditStatsModal(discord.ui.Modal, title="Edit Match Player Stats & Result")
         initial_lines = [f"{c.player}, {c.goals}, {c.assists}" for c in parent_view.candidates]
         self.stats_input.default = "\n".join(initial_lines) if initial_lines else ""
         self.result_input.default = parent_view.result.value
+
         h_score = getattr(parent_view, "home_score", None)
         a_score = getattr(parent_view, "away_score", None)
         if h_score is not None and a_score is not None:
-            self.score_input.default = f"{h_score}-{a_score}"
+            self.scores_input.default = f"{h_score}, {a_score}"
+
+        h_team = getattr(parent_view, "home_team", "Home")
+        a_team = getattr(parent_view, "away_team", "Away")
+        self.teams_input.default = f"{h_team}, {a_team}"
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         lines = [line.strip() for line in self.stats_input.value.splitlines() if line.strip()]
@@ -254,6 +272,27 @@ class EditStatsModal(discord.ui.Modal, title="Edit Match Player Stats & Result")
             )
             return
 
+        # Update Teams if provided
+        teams_val = self.teams_input.value.strip()
+        if teams_val and "," in teams_val:
+            h_t, a_t = [t.strip() for t in teams_val.split(",", 1)]
+            if h_t:
+                self.parent_view.home_team = h_t
+            if a_t:
+                self.parent_view.away_team = a_t
+
+        # Update Scores if provided
+        scores_val = self.scores_input.value.strip()
+        if scores_val and "," in scores_val:
+            try:
+                hs_str, as_str = [s.strip() for s in scores_val.split(",", 1)]
+                self.parent_view.home_score = int(hs_str)
+                self.parent_view.away_score = int(as_str)
+            except ValueError:
+                pass
+        else:
+            self.parent_view.home_score = sum(c.goals for c in new_candidates)
+
         # Update Result if provided
         res_val = self.result_input.value.strip()
         if res_val:
@@ -261,22 +300,29 @@ class EditStatsModal(discord.ui.Modal, title="Edit Match Player Stats & Result")
                 self.parent_view.result = MatchResult.from_str(res_val)
             except ValueError:
                 await interaction.response.send_message(
-                    f"❌ Invalid result '{res_val}'. Must be Win, Loss, or Draw.",
+                    f"❌ Invalid result '{res_val}'. Must be Home Win, Away Win, or Draw.",
                     ephemeral=True,
                 )
                 return
-
-        score_val = self.score_input.value.strip()
-        if score_val:
-            self.parent_view.notes = f"Score: {score_val}"
+        else:
+            # Auto-calculate result from scores
+            h_s = self.parent_view.home_score or 0
+            a_s = self.parent_view.away_score or 0
+            if h_s > a_s:
+                self.parent_view.result = MatchResult.HOME_WIN
+            elif h_s < a_s:
+                self.parent_view.result = MatchResult.AWAY_WIN
+            else:
+                self.parent_view.result = MatchResult.DRAW
 
         self.parent_view.candidates = new_candidates
-        self.parent_view.home_score = sum(c.goals for c in new_candidates)
         self.parent_view.error_note = None
 
         new_embed = build_preview_embed(
             candidates=self.parent_view.candidates,
             result=self.parent_view.result,
+            home_team=self.parent_view.home_team,
+            away_team=self.parent_view.away_team,
             home_score=self.parent_view.home_score,
             away_score=self.parent_view.away_score,
             away_candidates=self.parent_view.away_candidates,
@@ -294,6 +340,8 @@ class MatchPreviewView(discord.ui.View):
         result: MatchResult,
         excel_manager: ExcelManager,
         image_hash: str,
+        home_team: str = "Home",
+        away_team: str = "Away",
         home_score: Optional[int] = None,
         away_score: Optional[int] = None,
         away_candidates: Optional[List[OCRPlayerCandidate]] = None,
@@ -307,6 +355,8 @@ class MatchPreviewView(discord.ui.View):
         self.result = result
         self.excel_manager = excel_manager
         self.image_hash = image_hash
+        self.home_team = home_team
+        self.away_team = away_team
         self.home_score = home_score
         self.away_score = away_score
         self.away_candidates = away_candidates or []
@@ -346,10 +396,9 @@ class MatchPreviewView(discord.ui.View):
             for c in self.candidates
         ]
 
-        # Format descriptive note including score if available
-        final_notes = self.notes
-        if self.home_score is not None and self.away_score is not None and not final_notes:
-            final_notes = f"Score: Home {self.home_score} - {self.away_score} Away"
+        h_val = self.home_score if self.home_score is not None else sum(c.goals for c in self.candidates)
+        a_val = self.away_score if self.away_score is not None else 0
+        final_notes = self.notes or f"Score: {self.home_team} {h_val} - {a_val} {self.away_team} ({self.result.value})"
 
         record = MatchRecord(
             match_id=match_id,
@@ -375,7 +424,7 @@ class MatchPreviewView(discord.ui.View):
                 if isinstance(child, discord.ui.Button):
                     child.disabled = True
 
-            score_line = f" (Score: **{self.home_score} - {self.away_score}**)" if (self.home_score is not None and self.away_score is not None) else ""
+            score_line = f" ({self.home_team} **{h_val} - {a_val}** {self.away_team})"
             success_embed = discord.Embed(
                 title=f"✅ Match Saved — ID: {match_id}",
                 description=f"Match recorded for **{len(player_stats)}** player(s) as a **{self.result.value}**{score_line}.",
@@ -519,19 +568,19 @@ async def handle_pasted_match_message(
                 away_candidates = ocr_2.candidates
                 away_score = sum(c.goals for c in away_candidates)
 
-        if away_score is not None:
-            if home_score > away_score:
-                computed_res = MatchResult.WIN
-            elif home_score < away_score:
-                computed_res = MatchResult.LOSS
-            else:
-                computed_res = MatchResult.DRAW
+        a_score = away_score if away_score is not None else 0
+        if home_score > a_score:
+            computed_res = MatchResult.HOME_WIN
+        elif home_score < a_score:
+            computed_res = MatchResult.AWAY_WIN
         else:
-            computed_res = MatchResult.WIN
+            computed_res = MatchResult.DRAW
 
         embed = build_preview_embed(
             candidates=ocr_1.candidates,
             result=computed_res,
+            home_team="Home",
+            away_team="Away",
             home_score=home_score,
             away_score=away_score,
             away_candidates=away_candidates,
@@ -544,6 +593,8 @@ async def handle_pasted_match_message(
             result=computed_res,
             excel_manager=excel_manager,
             image_hash=image_hash,
+            home_team="Home",
+            away_team="Away",
             home_score=home_score,
             away_score=away_score,
             away_candidates=away_candidates,
@@ -583,14 +634,18 @@ def register_commands(
     @app_commands.describe(
         image="1st Image / Home team screenshot (paste Ctrl+V or upload)",
         image2="2nd Image / Away team screenshot (paste Ctrl+V or upload) - optional",
-        result="Match outcome (optional; auto-calculated from 1st vs 2nd image if 2 images provided)",
+        home_team="Home team name (optional, default: Home)",
+        away_team="Away team name (optional, default: Away)",
+        home_score="Home score (optional; auto-set to extracted goals from 1st image)",
+        away_score="Away score (optional; auto-set to extracted goals from 2nd image if provided)",
+        result="Match outcome (Home Win, Away Win, or Draw; auto-calculated from scores if omitted)",
         image_url="Or paste direct image URL for Home team (optional)",
         image2_url="Or paste direct image URL for Away team (optional)",
     )
     @app_commands.choices(
         result=[
-            app_commands.Choice(name="Win", value="Win"),
-            app_commands.Choice(name="Loss", value="Loss"),
+            app_commands.Choice(name="Home Win", value="Home Win"),
+            app_commands.Choice(name="Away Win", value="Away Win"),
             app_commands.Choice(name="Draw", value="Draw"),
         ]
     )
@@ -598,6 +653,10 @@ def register_commands(
         interaction: discord.Interaction,
         image: Optional[discord.Attachment] = None,
         image2: Optional[discord.Attachment] = None,
+        home_team: Optional[str] = "Home",
+        away_team: Optional[str] = "Away",
+        home_score: Optional[int] = None,
+        away_score: Optional[int] = None,
         result: Optional[app_commands.Choice[str]] = None,
         image_url: Optional[str] = None,
         image2_url: Optional[str] = None,
@@ -642,11 +701,12 @@ def register_commands(
                 tesseract_cmd=config.tesseract_cmd,
             )
             home_candidates = ocr_1.candidates
-            home_score = sum(c.goals for c in home_candidates)
+            extracted_home_goals = sum(c.goals for c in home_candidates)
+            final_home_score = home_score if home_score is not None else extracted_home_goals
 
             # 2. Download & Process Image 2 (Away Team, if provided)
             away_candidates: List[OCRPlayerCandidate] = []
-            away_score: Optional[int] = None
+            extracted_away_goals: Optional[int] = None
             has_image_2 = (image2 is not None) or bool(image2_url and image2_url.strip())
 
             if has_image_2:
@@ -661,26 +721,23 @@ def register_commands(
                         tesseract_cmd=config.tesseract_cmd,
                     )
                     away_candidates = ocr_2.candidates
-                    away_score = sum(c.goals for c in away_candidates)
+                    extracted_away_goals = sum(c.goals for c in away_candidates)
+
+            final_away_score = (
+                away_score if away_score is not None else (extracted_away_goals if extracted_away_goals is not None else 0)
+            )
 
             # 3. Determine Result:
-            # 1st image counts as home team score, 2nd image counts as away team score
-            if away_score is not None:
-                if home_score > away_score:
-                    calculated_result = MatchResult.WIN
-                elif home_score < away_score:
-                    calculated_result = MatchResult.LOSS
-                else:
-                    calculated_result = MatchResult.DRAW
-
-                # If user explicitly picked a result, use it; otherwise use calculated result
-                final_result = (
-                    MatchResult.from_str(result.value) if (result and result.value) else calculated_result
-                )
+            # Home Win, Away Win, or Draw
+            if result and result.value:
+                final_result = MatchResult.from_str(result.value)
             else:
-                final_result = (
-                    MatchResult.from_str(result.value) if (result and result.value) else MatchResult.WIN
-                )
+                if final_home_score > final_away_score:
+                    final_result = MatchResult.HOME_WIN
+                elif final_home_score < final_away_score:
+                    final_result = MatchResult.AWAY_WIN
+                else:
+                    final_result = MatchResult.DRAW
 
             error_notice = None
             if not ocr_1.success:
@@ -691,24 +748,31 @@ def register_commands(
                 error_notice = f"{duplicate_msg}\n{error_notice}" if error_notice else duplicate_msg
 
             # 4. Display interactive private preview
+            h_team_name = home_team.strip() if home_team else "Home"
+            a_team_name = away_team.strip() if away_team else "Away"
+
             preview_embed = build_preview_embed(
                 candidates=home_candidates,
                 result=final_result,
-                home_score=home_score,
-                away_score=away_score,
+                home_team=h_team_name,
+                away_team=a_team_name,
+                home_score=final_home_score,
+                away_score=final_away_score,
                 away_candidates=away_candidates,
                 error_note=error_notice,
             )
 
-            score_note = f"Score: Home {home_score} - {away_score} Away" if away_score is not None else ""
+            score_note = f"Score: {h_team_name} {final_home_score} - {final_away_score} {a_team_name} ({final_result.value})"
             view = MatchPreviewView(
                 submitting_user_id=interaction.user.id,
                 candidates=home_candidates,
                 result=final_result,
                 excel_manager=excel_manager,
                 image_hash=image_hash_1,
-                home_score=home_score,
-                away_score=away_score,
+                home_team=h_team_name,
+                away_team=a_team_name,
+                home_score=final_home_score,
+                away_score=final_away_score,
                 away_candidates=away_candidates,
                 notes=score_note,
                 error_note=error_notice,
@@ -928,7 +992,11 @@ def register_commands(
         )
 
         for m in recent:
-            res_emoji = "🟢" if m.result == MatchResult.WIN else ("🔴" if m.result == MatchResult.LOSS else "⚪")
+            res_emoji = (
+                "🟢"
+                if m.result in (MatchResult.HOME_WIN, MatchResult.WIN)
+                else ("🔴" if m.result in (MatchResult.AWAY_WIN, MatchResult.LOSS) else "⚪")
+            )
             player_summary = ", ".join(
                 f"{p.player} ({p.goals}G, {p.assists}A)" for p in m.player_stats
             ) or "No player stats"

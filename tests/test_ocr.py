@@ -78,24 +78,21 @@ def test_parse_player_columns_from_data() -> None:
         "height": [0, 30, 30, 40, 40, 35],
     }
 
-    # Region bounds matching player name band (x: 500-1500, y: 200-350)
     cols = parse_player_columns_from_data(
         synthetic_data, x_min=500, x_max=1500, y_min=200, y_max=350
     )
 
     assert len(cols) == 2
     assert cols[0][0] == "SkanRocky"
-    assert cols[0][1] == 760  # center_x = 700 + 60
+    assert cols[0][1] == 760
     assert cols[1][0] == "lillym"
-    assert cols[1][1] == 1245  # center_x = 1200 + 45
+    assert cols[1][1] == 1245
 
 
 def test_find_row_numbers_by_columns() -> None:
     """Verifies matching numeric statistics to column centers by horizontal distance."""
-    # Column centers: Player 1 at 760, Player 2 at 1245
     column_centers = [760, 1245]
 
-    # Row data around y=450 with numbers 2 and 0
     synthetic_row_data = {
         "text": ["Goals", "2", "0"],
         "conf": [90, 95, 95],
@@ -112,8 +109,8 @@ def test_find_row_numbers_by_columns() -> None:
         column_centers=column_centers,
     )
 
-    assert matched[0] == 2  # Column 0 (SkanRocky) has 2 goals
-    assert matched[1] == 0  # Column 1 (lillym) has 0 goals
+    assert matched[0] == 2
+    assert matched[1] == 0
 
 
 def test_ocr_pipeline_with_mocked_tesseract(tmp_path: Path) -> None:
@@ -122,9 +119,6 @@ def test_ocr_pipeline_with_mocked_tesseract(tmp_path: Path) -> None:
     img = Image.new("RGB", (1920, 1080), color=(20, 25, 30))
     img.save(img_path, format="PNG")
 
-    # Mock Tesseract data returning the example screenshot values:
-    # SkanRocky: 2 goals, 0 assists
-    # lillym: 0 goals, 1 assist
     mock_ocr_data = {
         "text": ["SkanRocky", "lillym", "Goals", "2", "0", "Assists", "0", "1"],
         "conf": [95, 95, 90, 95, 95, 90, 95, 95],
@@ -134,7 +128,8 @@ def test_ocr_pipeline_with_mocked_tesseract(tmp_path: Path) -> None:
         "height": [35, 35, 30, 30, 30, 30, 30, 30],
     }
 
-    with patch("ocr.pytesseract.image_to_data", return_value=mock_ocr_data), \
+    with patch("ocr._extract_via_targeted_regions", return_value=None), \
+         patch("ocr.pytesseract.image_to_data", return_value=mock_ocr_data), \
          patch("ocr.pytesseract.image_to_string", return_value="Mocked OCR Text"):
         result = extract_player_stats_from_screenshot(img_path)
 
@@ -157,8 +152,30 @@ def test_ocr_fails_safely_when_tesseract_missing(tmp_path: Path) -> None:
     img = Image.new("RGB", (800, 600), color=(0, 0, 0))
     img.save(img_path, format="PNG")
 
-    with patch("ocr.pytesseract.image_to_data", side_effect=pytesseract.TesseractNotFoundError()):
+    with patch("ocr._extract_via_targeted_regions", return_value=None), \
+         patch("ocr.pytesseract.image_to_data", side_effect=pytesseract.TesseractNotFoundError()):
         result = extract_player_stats_from_screenshot(img_path)
 
     assert result.success is False
     assert "Tesseract OCR executable was not found" in (result.error_reason or "")
+
+
+def test_real_efootball_details_screenshot_extraction() -> None:
+    """Tests OCR extraction on the real eFootball post-match Details screenshot fixture."""
+    fixture_path = Path(__file__).parent / "fixtures" / "sample_efootball_details.jpg"
+    if not fixture_path.exists():
+        pytest.skip("Fixture image not found.")
+
+    result = extract_player_stats_from_screenshot(fixture_path)
+    assert result.success is True
+    names = [c.player for c in result.candidates]
+    assert "SkanRocky" in names
+    assert "SuriBG6" in names
+
+    skan = next(c for c in result.candidates if c.player == "SkanRocky")
+    assert skan.goals == 3
+    assert skan.assists == 1
+
+    suri = next(c for c in result.candidates if c.player == "SuriBG6")
+    assert suri.goals == 1
+    assert suri.assists == 2

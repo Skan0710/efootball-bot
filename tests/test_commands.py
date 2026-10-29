@@ -157,13 +157,15 @@ async def test_edit_stats_modal_validation() -> None:
     view.result = MatchResult.WIN
     view.home_score = None
     view.away_score = None
+    view.home_team = "Home"
+    view.away_team = "Away"
     view.away_candidates = []
     modal = EditStatsModal(parent_view=view)
 
     # Valid multi-player input
     modal.stats_input._value = "SkanRocky, 2, 1\nlillym, 0, 3"
     modal.result_input._value = "Win"
-    modal.score_input._value = "2-0"
+    modal.scores_input._value = "2, 0"
     interaction = MagicMock(spec=discord.Interaction)
     interaction.response.edit_message = AsyncMock()
 
@@ -187,13 +189,15 @@ async def test_edit_stats_modal_invalid_input_rejected() -> None:
     view.result = MatchResult.WIN
     view.home_score = None
     view.away_score = None
+    view.home_team = "Home"
+    view.away_team = "Away"
     view.away_candidates = []
     modal = EditStatsModal(parent_view=view)
 
     # Invalid input (missing assists, negative goals)
     modal.stats_input._value = "BadFormatLine\nInvalidPlayer, -1, 2"
     modal.result_input._value = "Win"
-    modal.score_input._value = ""
+    modal.scores_input._value = ""
     interaction = MagicMock(spec=discord.Interaction)
     interaction.response.send_message = AsyncMock()
 

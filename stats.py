@@ -39,9 +39,9 @@ def calculate_player_aggregates(player_stats: List[PlayerStat]) -> Dict[str, Pla
         data["goals"] += stat.goals
         data["assists"] += stat.assists
 
-        if stat.result == MatchResult.WIN:
+        if stat.result in (MatchResult.HOME_WIN, MatchResult.WIN):
             data["wins"] += 1
-        elif stat.result == MatchResult.LOSS:
+        elif stat.result in (MatchResult.AWAY_WIN, MatchResult.LOSS):
             data["losses"] += 1
         elif stat.result == MatchResult.DRAW:
             data["draws"] += 1
