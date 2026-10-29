@@ -263,14 +263,26 @@ All six commands are registered directly to your configured guild for instant av
 
 ### 1. `/add-match-image`
 - **Arguments**:
-  - `image` *(Required attachment)*: Upload your screenshot of the eFootball post-match Details screen.
-  - `result` *(Required choice)*: Choose `Win`, `Loss`, or `Draw`.
+  - `image` *(Optional attachment)*: 1st Image / Home team post-match screenshot (paste with `Ctrl+V` or upload).
+  - `image2` *(Optional attachment)*: 2nd Image / Away team post-match screenshot (paste with `Ctrl+V` or upload).
+  - `result` *(Optional choice)*: Manual outcome override (`Win`, `Loss`, or `Draw`). If omitted and 2 images are provided, the outcome is auto-calculated by comparing 1st image (Home score) vs 2nd image (Away score)!
+  - `image_url` *(Optional string)*: Directly pasted URL/link to Home team screenshot.
+  - `image2_url` *(Optional string)*: Directly pasted URL/link to Away team screenshot.
+- **Direct Clipboard Paste (Ctrl+V)**:
+  - When selecting the `image` or `image2` fields in Discord, simply press `Ctrl+V` to paste screenshots straight from your clipboard without saving them to a file first.
+  - **Direct Chat Paste**: You can also press `Ctrl+V` in the authorized Discord channel to paste 1 or 2 screenshots directly into chat—the bot automatically detects the images and triggers the match preview!
+- **Home vs Away Score & Result**:
+  - **1st Image** = Home Team score (sum of goals scored by Home players).
+  - **2nd Image** = Away Team score (sum of goals scored by Away players).
+  - The bot automatically compares Home vs Away:
+    - Home > Away ➔ **Win**
+    - Home < Away ➔ **Loss**
+    - Home == Away ➔ **Draw**
 - **Workflow**:
-  - Responds ephemerally (only visible to you).
-  - Displays detected player names, goals, and assists.
+  - Responds with an interactive preview displaying the match score, detected players, and result.
   - Controls:
     - **Confirm & Save**: Permanently records the match and updates stats.
-    - **Edit Stats**: Opens a popup modal allowing manual correction.
+    - **Edit Stats**: Opens a popup modal allowing manual correction of player names, goals, assists, scores, and result.
     - **Cancel**: Discards the preview without saving.
 
 ### 2. `/delete-match`

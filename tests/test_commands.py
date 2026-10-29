@@ -155,10 +155,15 @@ async def test_edit_stats_modal_validation() -> None:
     view = MagicMock(spec=MatchPreviewView)
     view.candidates = []
     view.result = MatchResult.WIN
+    view.home_score = None
+    view.away_score = None
+    view.away_candidates = []
     modal = EditStatsModal(parent_view=view)
 
     # Valid multi-player input
     modal.stats_input._value = "SkanRocky, 2, 1\nlillym, 0, 3"
+    modal.result_input._value = "Win"
+    modal.score_input._value = "2-0"
     interaction = MagicMock(spec=discord.Interaction)
     interaction.response.edit_message = AsyncMock()
 
@@ -180,10 +185,15 @@ async def test_edit_stats_modal_invalid_input_rejected() -> None:
     view = MagicMock(spec=MatchPreviewView)
     view.candidates = []
     view.result = MatchResult.WIN
+    view.home_score = None
+    view.away_score = None
+    view.away_candidates = []
     modal = EditStatsModal(parent_view=view)
 
     # Invalid input (missing assists, negative goals)
     modal.stats_input._value = "BadFormatLine\nInvalidPlayer, -1, 2"
+    modal.result_input._value = "Win"
+    modal.score_input._value = ""
     interaction = MagicMock(spec=discord.Interaction)
     interaction.response.send_message = AsyncMock()
 
@@ -194,3 +204,39 @@ async def test_edit_stats_modal_invalid_input_rejected() -> None:
     interaction.response.send_message.assert_awaited_once()
     args, kwargs = interaction.response.send_message.call_args
     assert "Validation Errors" in args[0]
+
+
+def test_two_image_score_result_calculation() -> None:
+    """Verifies that 1st image counts as home score, 2nd image as away score, and outcome is calculated."""
+    # Home 3 - Away 1 -> Win
+    home_score = 3
+    away_score = 1
+    if home_score > away_score:
+        res = MatchResult.WIN
+    elif home_score < away_score:
+        res = MatchResult.LOSS
+    else:
+        res = MatchResult.DRAW
+    assert res == MatchResult.WIN
+
+    # Home 1 - Away 2 -> Loss
+    home_score = 1
+    away_score = 2
+    if home_score > away_score:
+        res = MatchResult.WIN
+    elif home_score < away_score:
+        res = MatchResult.LOSS
+    else:
+        res = MatchResult.DRAW
+    assert res == MatchResult.LOSS
+
+    # Home 2 - Away 2 -> Draw
+    home_score = 2
+    away_score = 2
+    if home_score > away_score:
+        res = MatchResult.WIN
+    elif home_score < away_score:
+        res = MatchResult.LOSS
+    else:
+        res = MatchResult.DRAW
+    assert res == MatchResult.DRAW

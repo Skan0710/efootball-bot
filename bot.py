@@ -11,7 +11,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from commands_handler import register_commands
+from commands_handler import handle_pasted_match_message, register_commands
 from config import BotConfig, load_config, setup_logging
 from excel_manager import ExcelManager
 
@@ -19,7 +19,7 @@ LOGGER = logging.getLogger("efootball_bot.bot")
 
 
 class EFootballBot(commands.Bot):
-    """Custom bot client with guild-specific slash command synchronization."""
+    """Custom bot client with guild-specific slash command synchronization and direct paste support."""
 
     def __init__(self, config: BotConfig) -> None:
         intents = discord.Intents.default()
@@ -80,6 +80,39 @@ class EFootballBot(commands.Bot):
             await self.change_presence(
                 activity=discord.Game(name="eFootball Co-op | /add-match-image")
             )
+
+    async def on_message(self, message: discord.Message) -> None:
+        """Listens for screenshots pasted directly (Ctrl+V) into authorized channel."""
+        if message.author.bot:
+            return
+
+        if message.guild is None or message.guild.id != self.bot_config.guild_id:
+            return
+
+        if self.bot_config.allowed_channel_id and message.channel.id != self.bot_config.allowed_channel_id:
+            return
+
+        # Check if user pasted images directly into the channel
+        image_attachments = [
+            att for att in message.attachments
+            if att.content_type and att.content_type.startswith("image/")
+        ]
+
+        if image_attachments:
+            LOGGER.info(
+                "Detected %d pasted screenshot(s) from user %s in channel %s",
+                len(image_attachments),
+                message.author.name,
+                message.channel.id,
+            )
+            await handle_pasted_match_message(
+                message=message,
+                attachments=image_attachments,
+                config=self.bot_config,
+                excel_manager=self.excel_manager,
+            )
+
+        await self.process_commands(message)
 
 
 def build_bot(config: Optional[BotConfig] = None) -> EFootballBot:

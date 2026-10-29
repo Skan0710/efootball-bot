@@ -8,8 +8,9 @@ import os
 import tempfile
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
+import aiohttp
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -46,6 +47,42 @@ def compute_file_sha256(file_path: Path) -> str:
     return hasher.hexdigest()
 
 
+async def download_image_source(
+    attachment: Optional[discord.Attachment],
+    url: Optional[str],
+    dest_path: Path,
+    max_bytes: int,
+) -> Tuple[bool, Optional[str]]:
+    """Saves an uploaded/pasted attachment or downloads an image from a URL."""
+    if attachment is not None:
+        if attachment.size > max_bytes:
+            return False, f"Image size exceeds limit of {max_bytes / (1024 * 1024):.1f} MB."
+        await attachment.save(dest_path)
+        return validate_image_file(dest_path, max_bytes=max_bytes)
+
+    if url is not None and url.strip():
+        clean_url = url.strip()
+        try:
+            timeout = aiohttp.ClientTimeout(total=15)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(clean_url) as resp:
+                    if resp.status != 200:
+                        return False, f"Failed to download image from URL (HTTP status {resp.status})."
+                    content_length = resp.headers.get("Content-Length")
+                    if content_length and int(content_length) > max_bytes:
+                        return False, f"Remote image exceeds limit of {max_bytes / (1024 * 1024):.1f} MB."
+                    data = await resp.read()
+                    if len(data) > max_bytes:
+                        return False, f"Remote image exceeds limit of {max_bytes / (1024 * 1024):.1f} MB."
+                    dest_path.write_bytes(data)
+            return validate_image_file(dest_path, max_bytes=max_bytes)
+        except Exception as exc:
+            LOGGER.error("Error downloading image from URL %s: %s", clean_url, exc)
+            return False, f"Could not download image from URL: {exc}"
+
+    return False, "No image attachment or URL was provided."
+
+
 def check_guild_and_channel(interaction: discord.Interaction, config: BotConfig) -> Optional[str]:
     """Validates that interaction originated from configured guild and allowed channel."""
     if interaction.guild_id != config.guild_id:
@@ -74,6 +111,9 @@ def is_user_admin(interaction: discord.Interaction, config: BotConfig) -> bool:
 def build_preview_embed(
     candidates: List[OCRPlayerCandidate],
     result: MatchResult,
+    home_score: Optional[int] = None,
+    away_score: Optional[int] = None,
+    away_candidates: Optional[List[OCRPlayerCandidate]] = None,
     error_note: Optional[str] = None,
 ) -> discord.Embed:
     """Builds the ephemeral verification embed for post-match statistics."""
@@ -83,8 +123,9 @@ def build_preview_embed(
         else (discord.Color.red() if result == MatchResult.LOSS else discord.Color.gold())
     )
 
+    title_score = f" — Score: {home_score} - {away_score}" if (home_score is not None and away_score is not None) else ""
     embed = discord.Embed(
-        title=f"Match Preview — Result: {result.value}",
+        title=f"Match Preview — Result: {result.value}{title_score}",
         description=(
             "Please review the extracted player stats below.\n"
             "Click **Confirm & Save** to persist, **Edit Stats** to make corrections, or **Cancel**."
@@ -92,6 +133,17 @@ def build_preview_embed(
         color=color,
         timestamp=datetime.now(),
     )
+
+    if home_score is not None and away_score is not None:
+        embed.add_field(
+            name="🏟️ Match Score (Home vs Away)",
+            value=(
+                f"🏠 **Home (1st Image):** `{home_score}`\n"
+                f"✈️ **Away (2nd Image):** `{away_score}`\n"
+                f"Outcome: **{result.value}**"
+            ),
+            inline=False,
+        )
 
     if not candidates:
         embed.add_field(
@@ -102,10 +154,18 @@ def build_preview_embed(
     else:
         for c in candidates:
             embed.add_field(
-                name=f"⚽ {c.player}",
+                name=f"⚽ {c.player} (Home)",
                 value=f"**Goals:** {c.goals} | **Assists:** {c.assists}",
                 inline=True,
             )
+
+    if away_candidates:
+        away_summary = ", ".join(f"{a.player} ({a.goals}G)" for a in away_candidates) or "None detected"
+        embed.add_field(
+            name="✈️ Opponent Players (Away Team)",
+            value=away_summary[:1024],
+            inline=False,
+        )
 
     if error_note:
         embed.add_field(
@@ -118,8 +178,8 @@ def build_preview_embed(
     return embed
 
 
-class EditStatsModal(discord.ui.Modal, title="Edit Match Player Stats"):
-    """Modal allowing manual correction of player names, goals, and assists."""
+class EditStatsModal(discord.ui.Modal, title="Edit Match Player Stats & Result"):
+    """Modal allowing manual correction of player names, goals, assists, and match outcome."""
 
     stats_input = discord.ui.TextInput(
         label="Format: Player, Goals, Assists (one per line)",
@@ -129,12 +189,32 @@ class EditStatsModal(discord.ui.Modal, title="Edit Match Player Stats"):
         max_length=1000,
     )
 
+    result_input = discord.ui.TextInput(
+        label="Result: Win, Loss, or Draw (optional)",
+        style=discord.TextStyle.short,
+        placeholder="Win",
+        required=False,
+        max_length=10,
+    )
+
+    score_input = discord.ui.TextInput(
+        label="Score / Notes (optional, e.g. 2-1)",
+        style=discord.TextStyle.short,
+        placeholder="2-1",
+        required=False,
+        max_length=100,
+    )
+
     def __init__(self, parent_view: MatchPreviewView) -> None:
         super().__init__()
         self.parent_view = parent_view
-        # Pre-populate with current values
         initial_lines = [f"{c.player}, {c.goals}, {c.assists}" for c in parent_view.candidates]
         self.stats_input.default = "\n".join(initial_lines) if initial_lines else ""
+        self.result_input.default = parent_view.result.value
+        h_score = getattr(parent_view, "home_score", None)
+        a_score = getattr(parent_view, "away_score", None)
+        if h_score is not None and a_score is not None:
+            self.score_input.default = f"{h_score}-{a_score}"
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         lines = [line.strip() for line in self.stats_input.value.splitlines() if line.strip()]
@@ -174,9 +254,33 @@ class EditStatsModal(discord.ui.Modal, title="Edit Match Player Stats"):
             )
             return
 
+        # Update Result if provided
+        res_val = self.result_input.value.strip()
+        if res_val:
+            try:
+                self.parent_view.result = MatchResult.from_str(res_val)
+            except ValueError:
+                await interaction.response.send_message(
+                    f"❌ Invalid result '{res_val}'. Must be Win, Loss, or Draw.",
+                    ephemeral=True,
+                )
+                return
+
+        score_val = self.score_input.value.strip()
+        if score_val:
+            self.parent_view.notes = f"Score: {score_val}"
+
         self.parent_view.candidates = new_candidates
+        self.parent_view.home_score = sum(c.goals for c in new_candidates)
         self.parent_view.error_note = None
-        new_embed = build_preview_embed(self.parent_view.candidates, self.parent_view.result)
+
+        new_embed = build_preview_embed(
+            candidates=self.parent_view.candidates,
+            result=self.parent_view.result,
+            home_score=self.parent_view.home_score,
+            away_score=self.parent_view.away_score,
+            away_candidates=self.parent_view.away_candidates,
+        )
         await interaction.response.edit_message(embed=new_embed, view=self.parent_view)
 
 
@@ -190,6 +294,9 @@ class MatchPreviewView(discord.ui.View):
         result: MatchResult,
         excel_manager: ExcelManager,
         image_hash: str,
+        home_score: Optional[int] = None,
+        away_score: Optional[int] = None,
+        away_candidates: Optional[List[OCRPlayerCandidate]] = None,
         notes: str = "",
         error_note: Optional[str] = None,
         timeout: float = 300.0,
@@ -200,6 +307,9 @@ class MatchPreviewView(discord.ui.View):
         self.result = result
         self.excel_manager = excel_manager
         self.image_hash = image_hash
+        self.home_score = home_score
+        self.away_score = away_score
+        self.away_candidates = away_candidates or []
         self.notes = notes
         self.error_note = error_note
 
@@ -236,13 +346,18 @@ class MatchPreviewView(discord.ui.View):
             for c in self.candidates
         ]
 
+        # Format descriptive note including score if available
+        final_notes = self.notes
+        if self.home_score is not None and self.away_score is not None and not final_notes:
+            final_notes = f"Score: Home {self.home_score} - {self.away_score} Away"
+
         record = MatchRecord(
             match_id=match_id,
             date=now_str,
             result=self.result,
             submitted_by=interaction.user.display_name,
             screenshot_ref=f"sha256:{self.image_hash[:16]}",
-            notes=self.notes,
+            notes=final_notes,
             player_stats=player_stats,
         )
 
@@ -260,9 +375,10 @@ class MatchPreviewView(discord.ui.View):
                 if isinstance(child, discord.ui.Button):
                     child.disabled = True
 
+            score_line = f" (Score: **{self.home_score} - {self.away_score}**)" if (self.home_score is not None and self.away_score is not None) else ""
             success_embed = discord.Embed(
                 title=f"✅ Match Saved — ID: {match_id}",
-                description=f"Match successfully recorded for **{len(player_stats)}** player(s) as a **{self.result.value}**.",
+                description=f"Match recorded for **{len(player_stats)}** player(s) as a **{self.result.value}**{score_line}.",
                 color=discord.Color.green(),
                 timestamp=datetime.now(),
             )
@@ -367,6 +483,91 @@ class DeleteConfirmView(discord.ui.View):
         )
 
 
+async def handle_pasted_match_message(
+    message: discord.Message,
+    attachments: List[discord.Attachment],
+    config: BotConfig,
+    excel_manager: ExcelManager,
+) -> None:
+    """Handles screenshots pasted directly into the channel via Ctrl+V."""
+    if not attachments:
+        return
+
+    temp_dir = Path(tempfile.gettempdir()) / "efootball_ocr"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    file_1 = temp_dir / f"paste_1_{message.id}_{attachments[0].id}.png"
+    file_2: Optional[Path] = None
+
+    try:
+        ok1, err1 = await download_image_source(attachments[0], None, file_1, config.max_image_bytes)
+        if not ok1:
+            await message.reply(f"❌ Could not process 1st image: {err1}", delete_after=15)
+            return
+
+        ocr_1 = extract_player_stats_from_screenshot(file_1, tesseract_cmd=config.tesseract_cmd)
+        home_score = sum(c.goals for c in ocr_1.candidates)
+        image_hash = compute_file_sha256(file_1)
+
+        away_score: Optional[int] = None
+        away_candidates: List[OCRPlayerCandidate] = []
+        if len(attachments) > 1:
+            file_2 = temp_dir / f"paste_2_{message.id}_{attachments[1].id}.png"
+            ok2, err2 = await download_image_source(attachments[1], None, file_2, config.max_image_bytes)
+            if ok2:
+                ocr_2 = extract_player_stats_from_screenshot(file_2, tesseract_cmd=config.tesseract_cmd)
+                away_candidates = ocr_2.candidates
+                away_score = sum(c.goals for c in away_candidates)
+
+        if away_score is not None:
+            if home_score > away_score:
+                computed_res = MatchResult.WIN
+            elif home_score < away_score:
+                computed_res = MatchResult.LOSS
+            else:
+                computed_res = MatchResult.DRAW
+        else:
+            computed_res = MatchResult.WIN
+
+        embed = build_preview_embed(
+            candidates=ocr_1.candidates,
+            result=computed_res,
+            home_score=home_score,
+            away_score=away_score,
+            away_candidates=away_candidates,
+            error_note=ocr_1.error_reason if not ocr_1.success else None,
+        )
+
+        view = MatchPreviewView(
+            submitting_user_id=message.author.id,
+            candidates=ocr_1.candidates,
+            result=computed_res,
+            excel_manager=excel_manager,
+            image_hash=image_hash,
+            home_score=home_score,
+            away_score=away_score,
+            away_candidates=away_candidates,
+            error_note=ocr_1.error_reason if not ocr_1.success else None,
+        )
+
+        await message.reply(
+            content=f"📸 **Post-Match Screenshots Detected** from {message.author.mention}!",
+            embed=embed,
+            view=view,
+        )
+    finally:
+        if file_1.exists():
+            try:
+                file_1.unlink()
+            except OSError:
+                pass
+        if file_2 and file_2.exists():
+            try:
+                file_2.unlink()
+            except OSError:
+                pass
+
+
 def register_commands(
     tree: app_commands.CommandTree,
     config: BotConfig,
@@ -377,11 +578,14 @@ def register_commands(
     # 1. /add-match-image
     @tree.command(
         name="add-match-image",
-        description="Submit an eFootball post-match screenshot to record player stats.",
+        description="Submit eFootball post-match screenshot(s) to record player stats.",
     )
     @app_commands.describe(
-        image="Post-match Details screenshot showing player names, goals, and assists",
-        result="Match outcome for your co-op team (Win, Loss, or Draw)",
+        image="1st Image / Home team screenshot (paste Ctrl+V or upload)",
+        image2="2nd Image / Away team screenshot (paste Ctrl+V or upload) - optional",
+        result="Match outcome (optional; auto-calculated from 1st vs 2nd image if 2 images provided)",
+        image_url="Or paste direct image URL for Home team (optional)",
+        image2_url="Or paste direct image URL for Away team (optional)",
     )
     @app_commands.choices(
         result=[
@@ -392,89 +596,135 @@ def register_commands(
     )
     async def add_match_image(
         interaction: discord.Interaction,
-        image: discord.Attachment,
-        result: app_commands.Choice[str],
+        image: Optional[discord.Attachment] = None,
+        image2: Optional[discord.Attachment] = None,
+        result: Optional[app_commands.Choice[str]] = None,
+        image_url: Optional[str] = None,
+        image2_url: Optional[str] = None,
     ) -> None:
         err = check_guild_and_channel(interaction, config)
         if err:
             await interaction.response.send_message(f"❌ {err}", ephemeral=True)
             return
 
+        # Check that at least one image source was provided
+        if image is None and not image_url:
+            await interaction.response.send_message(
+                "❌ Please attach an image or provide an `image_url` for the 1st image (Home team). You can paste directly with Ctrl+V into Discord!",
+                ephemeral=True,
+            )
+            return
+
         # Immediate deferral to ensure Discord interaction does not time out during processing
         await interaction.response.defer(ephemeral=True)
 
-        # 1. Validate attachment type & size
-        if not image.content_type or not image.content_type.startswith("image/"):
-            await interaction.followup.send(
-                "❌ Uploaded file must be an image (PNG, JPEG, or WEBP).",
-                ephemeral=True,
-            )
-            return
-
-        if image.size > config.max_image_bytes:
-            await interaction.followup.send(
-                f"❌ Image size ({image.size / (1024 * 1024):.1f} MB) exceeds maximum allowed limit of {config.max_image_mb} MB.",
-                ephemeral=True,
-            )
-            return
-
-        # 2. Safely download to a temporary file
         temp_dir = Path(tempfile.gettempdir()) / "efootball_ocr"
         temp_dir.mkdir(parents=True, exist_ok=True)
-        suffix = Path(image.filename).suffix or ".png"
-        temp_file = temp_dir / f"upload_{interaction.id}_{image.id}{suffix}"
+
+        suffix_1 = Path(image.filename).suffix if image else ".png"
+        temp_file_1 = temp_dir / f"upload_1_{interaction.id}{suffix_1}"
+        temp_file_2: Optional[Path] = None
 
         try:
-            await image.save(temp_file)
-
-            # 3. Validate image integrity
-            valid, val_err = validate_image_file(temp_file, max_bytes=config.max_image_bytes)
-            if not valid:
-                await interaction.followup.send(f"❌ Invalid image: {val_err}", ephemeral=True)
+            # 1. Download & Validate Image 1 (Home Team)
+            valid1, val_err1 = await download_image_source(
+                image, image_url, temp_file_1, config.max_image_bytes
+            )
+            if not valid1:
+                await interaction.followup.send(f"❌ Invalid 1st image (Home): {val_err1}", ephemeral=True)
                 return
 
-            # Check duplicate submission
-            image_hash = compute_file_sha256(temp_file)
-            is_duplicate = image_hash in RECENT_IMAGE_HASHES
+            image_hash_1 = compute_file_sha256(temp_file_1)
+            is_duplicate = image_hash_1 in RECENT_IMAGE_HASHES
 
-            # 4. OCR Extraction
-            ocr_result = extract_player_stats_from_screenshot(
-                temp_file,
+            ocr_1 = extract_player_stats_from_screenshot(
+                temp_file_1,
                 tesseract_cmd=config.tesseract_cmd,
             )
+            home_candidates = ocr_1.candidates
+            home_score = sum(c.goals for c in home_candidates)
+
+            # 2. Download & Process Image 2 (Away Team, if provided)
+            away_candidates: List[OCRPlayerCandidate] = []
+            away_score: Optional[int] = None
+            has_image_2 = (image2 is not None) or bool(image2_url and image2_url.strip())
+
+            if has_image_2:
+                suffix_2 = Path(image2.filename).suffix if image2 else ".png"
+                temp_file_2 = temp_dir / f"upload_2_{interaction.id}{suffix_2}"
+                valid2, val_err2 = await download_image_source(
+                    image2, image2_url, temp_file_2, config.max_image_bytes
+                )
+                if valid2:
+                    ocr_2 = extract_player_stats_from_screenshot(
+                        temp_file_2,
+                        tesseract_cmd=config.tesseract_cmd,
+                    )
+                    away_candidates = ocr_2.candidates
+                    away_score = sum(c.goals for c in away_candidates)
+
+            # 3. Determine Result:
+            # 1st image counts as home team score, 2nd image counts as away team score
+            if away_score is not None:
+                if home_score > away_score:
+                    calculated_result = MatchResult.WIN
+                elif home_score < away_score:
+                    calculated_result = MatchResult.LOSS
+                else:
+                    calculated_result = MatchResult.DRAW
+
+                # If user explicitly picked a result, use it; otherwise use calculated result
+                final_result = (
+                    MatchResult.from_str(result.value) if (result and result.value) else calculated_result
+                )
+            else:
+                final_result = (
+                    MatchResult.from_str(result.value) if (result and result.value) else MatchResult.WIN
+                )
 
             error_notice = None
-            if not ocr_result.success:
-                error_notice = ocr_result.error_reason or "OCR could not confidently detect all statistics."
+            if not ocr_1.success:
+                error_notice = ocr_1.error_reason or "OCR could not confidently detect all statistics in Image 1."
 
             if is_duplicate:
                 duplicate_msg = "⚠️ This exact screenshot appears to have already been submitted recently."
                 error_notice = f"{duplicate_msg}\n{error_notice}" if error_notice else duplicate_msg
 
-            # 5. Display interactive private preview
-            match_res = MatchResult.from_str(result.value)
+            # 4. Display interactive private preview
             preview_embed = build_preview_embed(
-                candidates=ocr_result.candidates,
-                result=match_res,
+                candidates=home_candidates,
+                result=final_result,
+                home_score=home_score,
+                away_score=away_score,
+                away_candidates=away_candidates,
                 error_note=error_notice,
             )
 
+            score_note = f"Score: Home {home_score} - {away_score} Away" if away_score is not None else ""
             view = MatchPreviewView(
                 submitting_user_id=interaction.user.id,
-                candidates=ocr_result.candidates,
-                result=match_res,
+                candidates=home_candidates,
+                result=final_result,
                 excel_manager=excel_manager,
-                image_hash=image_hash,
+                image_hash=image_hash_1,
+                home_score=home_score,
+                away_score=away_score,
+                away_candidates=away_candidates,
+                notes=score_note,
                 error_note=error_notice,
             )
 
             await interaction.followup.send(embed=preview_embed, view=view, ephemeral=True)
 
         finally:
-            # 6. Clean up temporary upload file
-            if temp_file.exists():
+            if temp_file_1.exists():
                 try:
-                    temp_file.unlink()
+                    temp_file_1.unlink()
+                except OSError:
+                    pass
+            if temp_file_2 and temp_file_2.exists():
+                try:
+                    temp_file_2.unlink()
                 except OSError:
                     pass
 
