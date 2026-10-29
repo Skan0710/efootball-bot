@@ -265,24 +265,34 @@ All six commands are registered directly to your configured guild for instant av
 - **Arguments**:
   - `image` *(Optional attachment)*: 1st Image / Home team post-match screenshot (paste with `Ctrl+V` or upload).
   - `image2` *(Optional attachment)*: 2nd Image / Away team post-match screenshot (paste with `Ctrl+V` or upload).
-  - `result` *(Optional choice)*: Manual outcome override (`Win`, `Loss`, or `Draw`). If omitted and 2 images are provided, the outcome is auto-calculated by comparing 1st image (Home score) vs 2nd image (Away score)!
+  - `home_team` *(Optional string)*: Name of Home team, or player names formatted like `Skan and Suri` (or `Skan & Suri`, `Skan, Suri`). The bot assigns Player 1 as `Skan` and Player 2 as `Suri`!
+  - `away_team` *(Optional string)*: Name of Away team, or opponent player names like `Alex and Bob`. The bot assigns Player 1 as `Alex` and Player 2 as `Bob`!
+  - `home_score` *(Optional integer)*: Home team match score. Auto-calculated from extracted goals if omitted.
+  - `away_score` *(Optional integer)*: Away team match score. Auto-calculated from 2nd image goals if omitted.
+  - `result` *(Optional choice)*: `Home Win`, `Away Win`, or `Draw`.
   - `image_url` *(Optional string)*: Directly pasted URL/link to Home team screenshot.
   - `image2_url` *(Optional string)*: Directly pasted URL/link to Away team screenshot.
+- **Player Names from Team Parameters**:
+  - Using `home_team: "S1 and S2"` tells the bot that Player 1 is `S1` and Player 2 is `S2`.
+  - Using `away_team: "S3 and S4"` tells the bot that Player 1 is `S3` and Player 2 is `S4`.
+- **Home Win vs Away Win Player Results**:
+  - **`Home Win`**: A **Win** is recorded for both Home team players (and a **Loss** for Away players).
+  - **`Away Win`**: A **Win** is recorded for both Away team players (and a **Loss** for Home players).
+  - **`Draw`**: A **Draw** is recorded for all participating players.
+- **Both Images & Assists Extracted**:
+  - Both 1st and 2nd images extract **Player Names**, **Goals**, and **Assists** simultaneously.
+  - The preview embed displays each player's individual Goals and Assists, as well as team outcome tags (`WIN 🏆`, `LOSS ❌`, `DRAW 🤝`).
+- **Where Data is Stored**:
+  - All confirmed matches and statistics are stored locally in the Excel workbook at `data/matches.xlsx`.
+  - Automated timestamped backups are preserved in `data/backups/`.
 - **Direct Clipboard Paste (Ctrl+V)**:
-  - When selecting the `image` or `image2` fields in Discord, simply press `Ctrl+V` to paste screenshots straight from your clipboard without saving them to a file first.
-  - **Direct Chat Paste**: You can also press `Ctrl+V` in the authorized Discord channel to paste 1 or 2 screenshots directly into chat—the bot automatically detects the images and triggers the match preview!
-- **Home vs Away Score & Result**:
-  - **1st Image** = Home Team score (sum of goals scored by Home players).
-  - **2nd Image** = Away Team score (sum of goals scored by Away players).
-  - The bot automatically compares Home vs Away:
-    - Home > Away ➔ **Win**
-    - Home < Away ➔ **Loss**
-    - Home == Away ➔ **Draw**
+  - When selecting the `image` or `image2` fields in Discord, press `Ctrl+V` to paste screenshots straight from your clipboard without saving them to disk first.
+  - **Direct Chat Paste**: You can also press `Ctrl+V` in the authorized Discord channel to paste 1 or 2 screenshots directly into chat—the bot detects the images and triggers the match preview!
 - **Workflow**:
   - Responds with an interactive preview displaying the match score, detected players, and result.
   - Controls:
-    - **Confirm & Save**: Permanently records the match and updates stats.
-    - **Edit Stats**: Opens a popup modal allowing manual correction of player names, goals, assists, scores, and result.
+    - **Confirm & Save**: Permanently records the match and updates stats in `data/matches.xlsx`.
+    - **Edit Stats**: Opens a popup modal allowing manual correction of Home and Away players, goals, assists, scores, and result.
     - **Cancel**: Discards the preview without saving.
 
 ### 2. `/delete-match`

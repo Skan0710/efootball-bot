@@ -215,9 +215,9 @@ def _extract_via_targeted_regions(
     for i in range(len(p_data.get("text", []))):
         t = str(p_data["text"][i]).strip()
         c = int(p_data["conf"][i]) if "conf" in p_data else 0
-        if len(t) >= 3 and c > 35:
+        if len(t) >= 2 and c > 30:
             clean = re.sub(r"[^\w\-\.]", "", t)
-            if len(clean) >= 3 and clean.lower() not in excluded_words and not clean.isdigit():
+            if len(clean) >= 2 and clean.lower() not in excluded_words and not clean.isdigit():
                 cx = int(p_data["left"][i]) + (int(p_data["width"][i]) // 2)
                 # Ensure it's in the central band (avoid left logos and right edge bars)
                 if int(scaled_w * 0.18) <= cx <= int(scaled_w * 0.90):
@@ -238,9 +238,23 @@ def _extract_via_targeted_regions(
     if not merged_players:
         return None
 
+    def _is_goals_text(txt: str) -> bool:
+        t_low = txt.lower().strip()
+        return "goal" in t_low or "g0al" in t_low or t_low == "g"
+
+    def _is_assists_text(txt: str) -> bool:
+        t_low = txt.lower().strip()
+        return any(sub in t_low for sub in ("assist", "asst", "asist", "ssist", "as1st", "asisl")) or bool(
+            re.search(r"as+i?s", t_low)
+        )
+
+    def _is_shots_text(txt: str) -> bool:
+        t_low = txt.lower().strip()
+        return "shot" in t_low or "shat" in t_low or "target" in t_low
+
     # 2. Table Area: Multi-offset search
     best_t_data: Optional[Dict[str, list]] = None
-    for offset in [0.22, 0.23, 0.21, 0.24, 0.20, 0.25]:
+    for offset in [0.22, 0.20, 0.23, 0.24, 0.21, 0.25, 0.26, 0.18]:
         ta = bgr[int(h * offset):int(h * 0.86), :]
         ta_gray = cv2.cvtColor(ta, cv2.COLOR_BGR2GRAY)
         ta_2x = cv2.resize(ta_gray, (0, 0), fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
@@ -249,13 +263,13 @@ def _extract_via_targeted_regions(
         except Exception:
             continue
 
-        texts = [str(t_data["text"][j]).strip().lower() for j in range(len(t_data.get("text", [])))]
-        has_g = any("goal" in txt for txt in texts)
-        has_a = any("assist" in txt for txt in texts)
+        texts = [str(t_data["text"][j]).strip() for j in range(len(t_data.get("text", [])))]
+        has_g = any(_is_goals_text(txt) for txt in texts)
+        has_a = any(_is_assists_text(txt) for txt in texts)
         if has_g and has_a:
             best_t_data = t_data
             break
-        elif has_g and best_t_data is None:
+        elif (has_g or has_a) and best_t_data is None:
             best_t_data = t_data
 
     if not best_t_data:
@@ -263,19 +277,32 @@ def _extract_via_targeted_regions(
 
     goals_y: Optional[int] = None
     assists_y: Optional[int] = None
+    shots_y: Optional[int] = None
 
     for i in range(len(best_t_data.get("text", []))):
-        t = str(best_t_data["text"][i]).strip().lower()
+        t = str(best_t_data["text"][i]).strip()
         y = int(best_t_data["top"][i])
-        if "goal" in t and goals_y is None:
+        if _is_goals_text(t) and goals_y is None:
             goals_y = y
-        if "assist" in t and assists_y is None:
+        if _is_assists_text(t) and assists_y is None:
             assists_y = y
+        if _is_shots_text(t) and shots_y is None:
+            shots_y = y
+
+    # Geometric fallback if assist text label was blurred/missing but row pitch is known
+    if assists_y is None and goals_y is not None:
+        if shots_y is not None and shots_y > goals_y:
+            # Assist row is situated after Shots (On Target) row
+            pitch = shots_y - goals_y
+            assists_y = shots_y + int(pitch * 1.55)
+        else:
+            # Approximate table row offset in scaled image
+            assists_y = goals_y + 195
 
     if goals_y is None and assists_y is None:
         return None
 
-    def get_row_numbers(target_y: Optional[int], tol: int = 50) -> List[Tuple[int, int]]:
+    def get_row_numbers(target_y: Optional[int], tol: int = 70) -> List[Tuple[int, int]]:
         nums: List[Tuple[int, int]] = []
         if target_y is None:
             return nums
@@ -285,18 +312,30 @@ def _extract_via_targeted_regions(
             x = int(best_t_data["left"][j])
             w_b = int(best_t_data["width"][j])
             cx = x + (w_b // 2)
-            m = re.match(r"^(\d+)", t)
-            if abs(y - target_y) <= tol and m:
-                nums.append((int(m.group(1)), cx))
+
+            if abs(y - target_y) <= tol:
+                m = re.search(r"\b(\d+)\b", t) or re.search(r"(\d+)", t)
+                if m:
+                    nums.append((int(m.group(1)), cx))
+                elif t.lower() in ("o", "q", "d", "u") and len(t) == 1:
+                    nums.append((0, cx))
         return nums
 
     g_nums = get_row_numbers(goals_y)
     a_nums = get_row_numbers(assists_y)
 
     candidates: List[OCRPlayerCandidate] = []
+    max_col_dist = int(scaled_w * 0.20)  # ~400px in 2x scaled image
+
     for name, pcx in merged_players:
-        g = min(g_nums, key=lambda it: abs(it[1] - pcx))[0] if g_nums else 0
-        a = min(a_nums, key=lambda it: abs(it[1] - pcx))[0] if a_nums else 0
+        # Match closest goal number within column bounds
+        valid_g = [gn for gn in g_nums if abs(gn[1] - pcx) <= max_col_dist]
+        g = min(valid_g, key=lambda it: abs(it[1] - pcx))[0] if valid_g else 0
+
+        # Match closest assist number within column bounds
+        valid_a = [an for an in a_nums if abs(an[1] - pcx) <= max_col_dist]
+        a = min(valid_a, key=lambda it: abs(it[1] - pcx))[0] if valid_a else 0
+
         candidates.append(OCRPlayerCandidate(player=name, goals=g, assists=a, confidence_note="Targeted Crop"))
 
     return OCRResult(

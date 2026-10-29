@@ -18,6 +18,7 @@ from commands_handler import (
 from config import BotConfig
 from excel_manager import ExcelManager
 from models import MatchRecord, MatchResult, OCRPlayerCandidate, PlayerStat
+from stats import calculate_player_aggregates
 
 
 @pytest.fixture
@@ -244,3 +245,101 @@ def test_two_image_score_result_calculation() -> None:
     else:
         res = MatchResult.DRAW
     assert res == MatchResult.DRAW
+
+
+def test_parse_players_from_team_param() -> None:
+    """Verifies that 'S1 and S2', 'S1 & S2', 'S1, S2' are parsed properly into individual players."""
+    from commands_handler import parse_players_from_team_param
+
+    assert parse_players_from_team_param("Skan and Suri") == ["Skan", "Suri"]
+    assert parse_players_from_team_param("Skan & Suri") == ["Skan", "Suri"]
+    assert parse_players_from_team_param("Skan, Suri") == ["Skan", "Suri"]
+    assert parse_players_from_team_param("Player1 and Player2 and Player3") == ["Player1", "Player2", "Player3"]
+    assert parse_players_from_team_param("Home") == []
+    assert parse_players_from_team_param("XI") == []
+    assert parse_players_from_team_param(None) == []
+
+
+@pytest.mark.asyncio
+async def test_home_and_away_win_outcomes_saved_to_excel(tmp_path: Path) -> None:
+    """Verifies that Home Win adds a win for home players (loss for away), and Away Win adds a win for away players."""
+    wb_path = tmp_path / "matches.xlsx"
+    manager = ExcelManager(wb_path)
+
+    home_players = [
+        OCRPlayerCandidate(player="Skan", goals=3, assists=1),
+        OCRPlayerCandidate(player="Suri", goals=1, assists=2),
+    ]
+    away_players = [
+        OCRPlayerCandidate(player="Alex", goals=1, assists=0),
+        OCRPlayerCandidate(player="Bob", goals=1, assists=1),
+    ]
+
+    # 1. Match with HOME_WIN
+    view_hw = MatchPreviewView(
+        submitting_user_id=101,
+        candidates=home_players,
+        result=MatchResult.HOME_WIN,
+        excel_manager=manager,
+        image_hash="hash_home_win",
+        home_team="Skan & Suri",
+        away_team="Alex & Bob",
+        home_score=4,
+        away_score=2,
+        away_candidates=away_players,
+    )
+
+    owner_interaction = MagicMock(spec=discord.Interaction)
+    owner_interaction.user.id = 101
+    owner_interaction.user.display_name = "Skan"
+    owner_interaction.user.name = "Skan"
+    owner_interaction.response.defer = AsyncMock()
+    owner_interaction.edit_original_response = AsyncMock()
+
+    await view_hw.confirm_button.callback(owner_interaction)
+
+    all_stats = await manager.get_all_player_stats()
+    aggs = calculate_player_aggregates(all_stats)
+
+    # Home players get WIN
+    assert aggs["skan"].wins == 1
+    assert aggs["skan"].losses == 0
+    assert aggs["suri"].wins == 1
+    assert aggs["suri"].losses == 0
+    # Away players get LOSS
+    assert aggs["alex"].wins == 0
+    assert aggs["alex"].losses == 1
+    assert aggs["bob"].wins == 0
+    assert aggs["bob"].losses == 1
+
+    # 2. Match with AWAY_WIN
+    view_aw = MatchPreviewView(
+        submitting_user_id=101,
+        candidates=home_players,
+        result=MatchResult.AWAY_WIN,
+        excel_manager=manager,
+        image_hash="hash_away_win",
+        home_team="Skan & Suri",
+        away_team="Alex & Bob",
+        home_score=0,
+        away_score=2,
+        away_candidates=away_players,
+    )
+
+    await view_aw.confirm_button.callback(owner_interaction)
+
+    all_stats2 = await manager.get_all_player_stats()
+    aggs2 = calculate_player_aggregates(all_stats2)
+
+    # In match 2 (Away Win): Away players got a win, Home players got a loss!
+    # Skan & Suri now have 1 win, 1 loss total
+    assert aggs2["skan"].wins == 1
+    assert aggs2["skan"].losses == 1
+    assert aggs2["suri"].wins == 1
+    assert aggs2["suri"].losses == 1
+    # Alex & Bob now have 1 win, 1 loss total
+    assert aggs2["alex"].wins == 1
+    assert aggs2["alex"].losses == 1
+    assert aggs2["bob"].wins == 1
+    assert aggs2["bob"].losses == 1
+
