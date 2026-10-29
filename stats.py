@@ -118,6 +118,26 @@ def get_leaderboard(
             key=lambda r: (r.matches_played, r.wins, r.goals, r.win_rate),
             reverse=True,
         )
+    elif category == LeaderboardCategory.GA:
+        records.sort(
+            key=lambda r: (r.ga, r.goals, r.assists, r.matches_played),
+            reverse=True,
+        )
+    elif category == LeaderboardCategory.GPG:
+        records.sort(
+            key=lambda r: (r.gpg, r.goals, r.matches_played),
+            reverse=True,
+        )
+    elif category == LeaderboardCategory.APG:
+        records.sort(
+            key=lambda r: (r.apg, r.assists, r.matches_played),
+            reverse=True,
+        )
+    elif category == LeaderboardCategory.GAPG:
+        records.sort(
+            key=lambda r: (r.gapg, r.ga, r.goals, r.matches_played),
+            reverse=True,
+        )
     else:
         # Fallback to goals
         records.sort(key=lambda r: (r.goals, r.assists), reverse=True)

@@ -34,6 +34,7 @@ async def test_workbook_initialization(tmp_path: Path) -> None:
         "SubmittedBy",
         "ScreenshotReference",
         "Notes",
+        "PlayerStatsJSON",
     ]
 
     # Verify PlayerStats header row
@@ -51,7 +52,7 @@ async def test_workbook_initialization(tmp_path: Path) -> None:
         "GAPG",
     ]
 
-    # Verify Leaderboard header row (no Draws or DrawRate%)
+    # Verify Leaderboard header row
     ws_lb = wb[SHEET_LEADERBOARD]
     headers_lb = [cell.value for cell in ws_lb[1]]
     assert headers_lb == [
@@ -59,10 +60,14 @@ async def test_workbook_initialization(tmp_path: Path) -> None:
         "MatchesPlayed",
         "Goals",
         "Assists",
+        "G/A",
         "Wins",
         "Losses",
         "WinRate%",
         "LossRate%",
+        "GPG",
+        "APG",
+        "GAPG",
     ]
     wb.close()
 
@@ -149,6 +154,13 @@ async def test_delete_match_removes_players_and_updates_aggregates(tmp_path: Pat
     assert p1_initial.wins == 1
     assert p1_initial.losses == 1
 
+    # Verify Leaderboard sheet directly
+    lb_before = await manager.get_leaderboard_from_sheet()
+    p1_lb = next(r for r in lb_before if r["player"] == "PlayerOne")
+    assert p1_lb["matches_played"] == 2
+    assert p1_lb["goals"] == 4
+    assert p1_lb["ga"] == 5
+
     # Delete Match 2
     deleted = await manager.delete_match("M-002")
     assert deleted is True
@@ -168,6 +180,15 @@ async def test_delete_match_removes_players_and_updates_aggregates(tmp_path: Pat
     assert p1_updated.wins == 1
     assert p1_updated.losses == 0
     assert p1_updated.win_rate == 100.0
+
+    # Verify Leaderboard sheet was auto-recalculated immediately upon match deletion
+    lb_after = await manager.get_leaderboard_from_sheet()
+    p1_lb_after = next(r for r in lb_after if r["player"] == "PlayerOne")
+    assert p1_lb_after["matches_played"] == 1
+    assert p1_lb_after["goals"] == 3
+    assert p1_lb_after["ga"] == 4
+    assert p1_lb_after["wins"] == 1
+    assert p1_lb_after["losses"] == 0
 
 
 @pytest.mark.asyncio

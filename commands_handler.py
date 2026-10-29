@@ -733,14 +733,9 @@ class DeleteConfirmView(discord.ui.View):
                 child.disabled = True
 
         if deleted:
-            # Refresh leaderboard sheet in workbook
-            all_stats = await self.excel_manager.get_all_player_stats()
-            aggregates = calculate_player_aggregates(all_stats)
-            await self.excel_manager.update_leaderboard_sheet(list(aggregates.values()))
-
             embed = discord.Embed(
                 title="🗑️ Match Deleted",
-                description=f"Match **{self.match_id}** and all associated player statistics were permanently removed.",
+                description=f"Match **{self.match_id}** was permanently removed. All player stats and leaderboard were automatically recalculated in Excel.",
                 color=discord.Color.red(),
             )
             LOGGER.info("Admin %s deleted match %s", interaction.user.name, self.match_id)
@@ -1226,11 +1221,14 @@ def register_commands(
         category=[
             app_commands.Choice(name="Goals", value=LeaderboardCategory.GOALS.value),
             app_commands.Choice(name="Assists", value=LeaderboardCategory.ASSISTS.value),
+            app_commands.Choice(name="G/A (Goals + Assists)", value=LeaderboardCategory.GA.value),
             app_commands.Choice(name="Wins", value=LeaderboardCategory.WINS.value),
             app_commands.Choice(name="Losses", value=LeaderboardCategory.LOSSES.value),
-            app_commands.Choice(name="Draws", value=LeaderboardCategory.DRAWS.value),
             app_commands.Choice(name="Win rate", value=LeaderboardCategory.WIN_RATE.value),
             app_commands.Choice(name="Matches played", value=LeaderboardCategory.MATCHES_PLAYED.value),
+            app_commands.Choice(name="GPG (Goals Per Game)", value=LeaderboardCategory.GPG.value),
+            app_commands.Choice(name="APG (Assists Per Game)", value=LeaderboardCategory.APG.value),
+            app_commands.Choice(name="GAPG (G/A Per Game)", value=LeaderboardCategory.GAPG.value),
         ]
     )
     async def leaderboard(
@@ -1244,50 +1242,76 @@ def register_commands(
 
         await interaction.response.defer()
 
-        all_stats = await excel_manager.get_all_player_stats()
-        aggregates = calculate_player_aggregates(all_stats)
-
-        cat_enum = LeaderboardCategory(category.value)
-        ranked = get_leaderboard(aggregates, cat_enum)
-
-        if not ranked:
+        records = await excel_manager.get_leaderboard_from_sheet()
+        if not records:
             await interaction.followup.send(
-                "📋 No match statistics have been recorded yet. Use `/add-match-image` to record a match!",
+                "📋 No match statistics have been recorded yet in Excel. Use `/add-match-image` or `/add-match-text` to record a match!",
             )
             return
 
+        cat_choice = category.value
+        if cat_choice == LeaderboardCategory.GOALS.value:
+            records.sort(key=lambda r: (r["goals"], r["ga"], r["assists"], r["matches_played"]), reverse=True)
+        elif cat_choice == LeaderboardCategory.ASSISTS.value:
+            records.sort(key=lambda r: (r["assists"], r["ga"], r["goals"], r["matches_played"]), reverse=True)
+        elif cat_choice == LeaderboardCategory.GA.value:
+            records.sort(key=lambda r: (r["ga"], r["goals"], r["assists"], r["matches_played"]), reverse=True)
+        elif cat_choice == LeaderboardCategory.WINS.value:
+            records.sort(key=lambda r: (r["wins"], r["win_rate"], r["matches_played"]), reverse=True)
+        elif cat_choice == LeaderboardCategory.LOSSES.value:
+            records.sort(key=lambda r: (r["losses"], r["loss_rate"], r["matches_played"]), reverse=True)
+        elif cat_choice == LeaderboardCategory.WIN_RATE.value:
+            records.sort(key=lambda r: (r["win_rate"], r["wins"], r["matches_played"]), reverse=True)
+        elif cat_choice == LeaderboardCategory.MATCHES_PLAYED.value:
+            records.sort(key=lambda r: (r["matches_played"], r["wins"], r["goals"]), reverse=True)
+        elif cat_choice == LeaderboardCategory.GPG.value:
+            records.sort(key=lambda r: (r["gpg"], r["goals"], r["matches_played"]), reverse=True)
+        elif cat_choice == LeaderboardCategory.APG.value:
+            records.sort(key=lambda r: (r["apg"], r["assists"], r["matches_played"]), reverse=True)
+        elif cat_choice == LeaderboardCategory.GAPG.value:
+            records.sort(key=lambda r: (r["gapg"], r["ga"], r["matches_played"]), reverse=True)
+        else:
+            records.sort(key=lambda r: (r["goals"], r["assists"]), reverse=True)
+
         embed = discord.Embed(
-            title=f"🏆 Co-op Leaderboard — {cat_enum.value}",
+            title=f"📊 Co-op Leaderboard — {cat_choice}",
+            description=f"*Loaded directly from Excel (`data/matches.xlsx`). Sorted by **{cat_choice}**.*\n\n",
             color=discord.Color.gold(),
             timestamp=datetime.now(),
         )
 
         medals = ["🥇", "🥈", "🥉"]
         lines = []
-        for rank, p in enumerate(ranked[:20], start=1):
+        for rank, r in enumerate(records[:20], start=1):
             badge = medals[rank - 1] if rank <= 3 else f"`#{rank}`"
 
-            if cat_enum == LeaderboardCategory.GOALS:
-                stat_str = f"**{p.goals}** goals ({p.matches_played} matches)"
-            elif cat_enum == LeaderboardCategory.ASSISTS:
-                stat_str = f"**{p.assists}** assists ({p.matches_played} matches)"
-            elif cat_enum == LeaderboardCategory.WINS:
-                stat_str = f"**{p.wins}** wins ({p.win_rate}%)"
-            elif cat_enum == LeaderboardCategory.LOSSES:
-                stat_str = f"**{p.losses}** losses ({p.loss_rate}%)"
-            elif cat_enum == LeaderboardCategory.DRAWS:
-                stat_str = f"**{p.draws}** draws ({p.draw_rate}%)"
-            elif cat_enum == LeaderboardCategory.WIN_RATE:
-                stat_str = f"**{p.win_rate}%** ({p.wins}W / {p.losses}L / {p.draws}D)"
-            elif cat_enum == LeaderboardCategory.MATCHES_PLAYED:
-                stat_str = f"**{p.matches_played}** matches ({p.wins}W - {p.win_rate}%)"
+            if cat_choice == LeaderboardCategory.GOALS.value:
+                stat_str = f"**{r['goals']}** goals"
+            elif cat_choice == LeaderboardCategory.ASSISTS.value:
+                stat_str = f"**{r['assists']}** assists"
+            elif cat_choice == LeaderboardCategory.GA.value:
+                stat_str = f"**{r['ga']}** G/A"
+            elif cat_choice == LeaderboardCategory.WINS.value:
+                stat_str = f"**{r['wins']}** wins"
+            elif cat_choice == LeaderboardCategory.LOSSES.value:
+                stat_str = f"**{r['losses']}** losses"
+            elif cat_choice == LeaderboardCategory.WIN_RATE.value:
+                stat_str = f"**{r['win_rate']:.1f}%**"
+            elif cat_choice == LeaderboardCategory.MATCHES_PLAYED.value:
+                stat_str = f"**{r['matches_played']}** matches"
+            elif cat_choice == LeaderboardCategory.GPG.value:
+                stat_str = f"**{r['gpg']:.2f}** GPG"
+            elif cat_choice == LeaderboardCategory.APG.value:
+                stat_str = f"**{r['apg']:.2f}** APG"
+            elif cat_choice == LeaderboardCategory.GAPG.value:
+                stat_str = f"**{r['gapg']:.2f}** GAPG"
             else:
-                stat_str = f"**{p.goals}** goals"
+                stat_str = f"**{r['goals']}** goals"
 
-            lines.append(f"{badge} **{p.player}** — {stat_str}")
+            lines.append(f"{badge} **{r['player']}** — {stat_str}")
 
         embed.description = "\n".join(lines)
-        embed.set_footer(text=f"Total registered teammates: {len(ranked)}")
+        embed.set_footer(text=f"Total registered teammates: {len(records)} • Synced from matches.xlsx")
         await interaction.followup.send(embed=embed)
 
     # 4. /record
@@ -1302,40 +1326,46 @@ def register_commands(
             await interaction.response.send_message(f"❌ {err}", ephemeral=True)
             return
 
-        all_stats = await excel_manager.get_all_player_stats()
-        aggregates = calculate_player_aggregates(all_stats)
-        p_record = get_player_record(player, aggregates)
+        records = await excel_manager.get_leaderboard_from_sheet()
+        canonical = canonicalize_player_name(player)
+        p_record = next(
+            (r for r in records if r["player"].lower() == canonical.lower() or r["player"].lower() == player.lower()),
+            None,
+        )
 
         if not p_record:
             await interaction.response.send_message(
-                f"❌ Player **{player}** was not found in recorded statistics. Use `/teammates` to see registered players.",
+                f"❌ Player **{player}** was not found in Excel leaderboard. Use `/teammates` to see registered players.",
                 ephemeral=True,
             )
             return
 
         embed = discord.Embed(
-            title=f"📊 Career Record — {p_record.player}",
+            title=f"📊 Career Record — {p_record['player']}",
             color=discord.Color.blue(),
             timestamp=datetime.now(),
         )
-        embed.add_field(name="Matches Played", value=str(p_record.matches_played), inline=True)
-        embed.add_field(name="Goals", value=str(p_record.goals), inline=True)
-        embed.add_field(name="Assists", value=str(p_record.assists), inline=True)
+        embed.add_field(name="Matches Played", value=str(p_record["matches_played"]), inline=True)
+        embed.add_field(name="Goals", value=str(p_record["goals"]), inline=True)
+        embed.add_field(name="Assists", value=str(p_record["assists"]), inline=True)
+        embed.add_field(name="G/A (Goals + Assists)", value=str(p_record["ga"]), inline=True)
+        embed.add_field(name="Goals Per Game (GPG)", value=f"{p_record['gpg']:.2f}", inline=True)
+        embed.add_field(name="Assists Per Game (APG)", value=f"{p_record['apg']:.2f}", inline=True)
+        embed.add_field(name="G/A Per Game (GAPG)", value=f"{p_record['gapg']:.2f}", inline=True)
         embed.add_field(
             name="Match Results",
-            value=f"**Wins:** {p_record.wins} | **Losses:** {p_record.losses} | **Draws:** {p_record.draws}",
-            inline=False,
+            value=f"**Wins:** {p_record['wins']} | **Losses:** {p_record['losses']}",
+            inline=True,
         )
         embed.add_field(
             name="Performance Rates",
             value=(
-                f"🟢 **Win Rate:** {p_record.win_rate}%\n"
-                f"🔴 **Loss Rate:** {p_record.loss_rate}%\n"
-                f"⚪ **Draw Rate:** {p_record.draw_rate}%"
+                f"🟢 **Win Rate:** {p_record['win_rate']:.1f}%\n"
+                f"🔴 **Loss Rate:** {p_record['loss_rate']:.1f}%"
             ),
-            inline=False,
+            inline=True,
         )
-        embed.set_footer(text="eFootball Co-op Statistics")
+        embed.set_footer(text="eFootball Co-op Statistics • Fetched from Excel")
         await interaction.response.send_message(embed=embed)
 
     # 5. /matches
@@ -1398,9 +1428,8 @@ def register_commands(
             await interaction.response.send_message(f"❌ {err}", ephemeral=True)
             return
 
-        all_stats = await excel_manager.get_all_player_stats()
-        aggregates = calculate_player_aggregates(all_stats)
-        sorted_teammates = get_all_teammates(aggregates)
+        records = await excel_manager.get_leaderboard_from_sheet()
+        sorted_teammates = sorted(records, key=lambda r: r["player"].lower())
 
         if not sorted_teammates:
             await interaction.response.send_message(
@@ -1418,9 +1447,9 @@ def register_commands(
         lines = []
         for t in sorted_teammates:
             lines.append(
-                f"• **{t.player}**: {t.matches_played} matches | {t.goals} goals | {t.assists} assists | {t.wins}W / {t.losses}L / {t.draws}D ({t.win_rate}% WR)"
+                f"• **{t['player']}**: {t['matches_played']} matches | {t['goals']} goals | {t['assists']} assists | G/A: {t['ga']} | {t['wins']}W / {t['losses']}L ({t['win_rate']:.1f}% WR)"
             )
 
         embed.description = "\n".join(lines)
-        embed.set_footer(text="Alphabetical order by name")
+        embed.set_footer(text="Alphabetical order by name • Fetched from Excel")
         await interaction.response.send_message(embed=embed)

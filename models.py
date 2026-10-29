@@ -96,11 +96,15 @@ class LeaderboardCategory(str, Enum):
 
     GOALS = "Goals"
     ASSISTS = "Assists"
+    GA = "G/A"
     WINS = "Wins"
     LOSSES = "Losses"
     DRAWS = "Draws"
     WIN_RATE = "Win rate"
     MATCHES_PLAYED = "Matches played"
+    GPG = "GPG"
+    APG = "APG"
+    GAPG = "GAPG"
 
 
 @dataclass
@@ -161,6 +165,10 @@ class PlayerAggregateRecord:
     win_rate: float = 0.0
     loss_rate: float = 0.0
     draw_rate: float = 0.0
+    ga: int = 0
+    gpg: float = 0.0
+    apg: float = 0.0
+    gapg: float = 0.0
 
     @classmethod
     def compute(
@@ -174,14 +182,21 @@ class PlayerAggregateRecord:
         draws: int,
     ) -> PlayerAggregateRecord:
         """Computes win, loss, and draw rates safely avoiding division by zero."""
+        ga = goals + assists
         if matches_played > 0:
             w_rate = round((wins / matches_played) * 100.0, 1)
             l_rate = round((losses / matches_played) * 100.0, 1)
             d_rate = round((draws / matches_played) * 100.0, 1)
+            gpg = round(goals / matches_played, 2)
+            apg = round(assists / matches_played, 2)
+            gapg = round(ga / matches_played, 2)
         else:
             w_rate = 0.0
             l_rate = 0.0
             d_rate = 0.0
+            gpg = 0.0
+            apg = 0.0
+            gapg = 0.0
 
         return cls(
             player=player,
@@ -194,6 +209,10 @@ class PlayerAggregateRecord:
             win_rate=w_rate,
             loss_rate=l_rate,
             draw_rate=d_rate,
+            ga=ga,
+            gpg=gpg,
+            apg=apg,
+            gapg=gapg,
         )
 
 
