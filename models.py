@@ -106,6 +106,37 @@ class LeaderboardCategory(str, Enum):
     APG = "APG"
     GAPG = "GAPG"
 
+    @classmethod
+    def from_str(cls, value: str) -> LeaderboardCategory:
+        norm = value.strip().lower()
+        if "gapg" in norm or "g/a per" in norm or "ga per" in norm:
+            return cls.GAPG
+        if "gpg" in norm or "goals per" in norm:
+            return cls.GPG
+        if "apg" in norm or "assists per" in norm:
+            return cls.APG
+        if norm in ("g/a", "ga", "g_a") or "goals + assists" in norm or "g+a" in norm:
+            return cls.GA
+        if "goal" in norm:
+            return cls.GOALS
+        if "assist" in norm:
+            return cls.ASSISTS
+        if "win rate" in norm or "winrate" in norm or "%" in norm:
+            return cls.WIN_RATE
+        if "win" in norm:
+            return cls.WINS
+        if "loss" in norm:
+            return cls.LOSSES
+        if "draw" in norm:
+            return cls.DRAWS
+        if "match" in norm or "played" in norm or "mp" in norm:
+            return cls.MATCHES_PLAYED
+
+        for member in cls:
+            if member.value.lower() == norm or member.name.lower() == norm:
+                return member
+        return cls.GOALS
+
 
 @dataclass
 class PlayerStat:

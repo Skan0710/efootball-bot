@@ -663,6 +663,7 @@ class ExcelManager:
 
                 wins = _safe_int(6)
                 losses = _safe_int(7)
+                draws = max(0, mp - wins - losses)
 
                 wr_raw = ws.cell(row=r, column=8).value
                 win_rate = float(wr_raw) if isinstance(wr_raw, (int, float)) else (round((wins / mp) * 100, 1) if mp > 0 else 0.0)
@@ -687,6 +688,7 @@ class ExcelManager:
                     "ga": ga,
                     "wins": wins,
                     "losses": losses,
+                    "draws": draws,
                     "win_rate": win_rate,
                     "loss_rate": loss_rate,
                     "gpg": gpg,

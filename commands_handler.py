@@ -1249,33 +1249,36 @@ def register_commands(
             )
             return
 
-        cat_choice = category.value
-        if cat_choice == LeaderboardCategory.GOALS.value:
+        raw_val = category.value if hasattr(category, "value") else str(category)
+        cat_enum = LeaderboardCategory.from_str(raw_val)
+
+        if cat_enum == LeaderboardCategory.GOALS:
             records.sort(key=lambda r: (r["goals"], r["ga"], r["assists"], r["matches_played"]), reverse=True)
-        elif cat_choice == LeaderboardCategory.ASSISTS.value:
+        elif cat_enum == LeaderboardCategory.ASSISTS:
             records.sort(key=lambda r: (r["assists"], r["ga"], r["goals"], r["matches_played"]), reverse=True)
-        elif cat_choice == LeaderboardCategory.GA.value:
+        elif cat_enum == LeaderboardCategory.GA:
             records.sort(key=lambda r: (r["ga"], r["goals"], r["assists"], r["matches_played"]), reverse=True)
-        elif cat_choice == LeaderboardCategory.WINS.value:
+        elif cat_enum == LeaderboardCategory.WINS:
             records.sort(key=lambda r: (r["wins"], r["win_rate"], r["matches_played"]), reverse=True)
-        elif cat_choice == LeaderboardCategory.LOSSES.value:
+        elif cat_enum == LeaderboardCategory.LOSSES:
             records.sort(key=lambda r: (r["losses"], r["loss_rate"], r["matches_played"]), reverse=True)
-        elif cat_choice == LeaderboardCategory.WIN_RATE.value:
+        elif cat_enum == LeaderboardCategory.DRAWS:
+            records.sort(key=lambda r: (r["draws"], r["matches_played"]), reverse=True)
+        elif cat_enum == LeaderboardCategory.WIN_RATE:
             records.sort(key=lambda r: (r["win_rate"], r["wins"], r["matches_played"]), reverse=True)
-        elif cat_choice == LeaderboardCategory.MATCHES_PLAYED.value:
+        elif cat_enum == LeaderboardCategory.MATCHES_PLAYED:
             records.sort(key=lambda r: (r["matches_played"], r["wins"], r["goals"]), reverse=True)
-        elif cat_choice == LeaderboardCategory.GPG.value:
+        elif cat_enum == LeaderboardCategory.GPG:
             records.sort(key=lambda r: (r["gpg"], r["goals"], r["matches_played"]), reverse=True)
-        elif cat_choice == LeaderboardCategory.APG.value:
+        elif cat_enum == LeaderboardCategory.APG:
             records.sort(key=lambda r: (r["apg"], r["assists"], r["matches_played"]), reverse=True)
-        elif cat_choice == LeaderboardCategory.GAPG.value:
+        elif cat_enum == LeaderboardCategory.GAPG:
             records.sort(key=lambda r: (r["gapg"], r["ga"], r["matches_played"]), reverse=True)
         else:
             records.sort(key=lambda r: (r["goals"], r["assists"]), reverse=True)
 
         embed = discord.Embed(
-            title=f"📊 Co-op Leaderboard — {cat_choice}",
-            description=f"*Loaded directly from Excel (`data/matches.xlsx`). Sorted by **{cat_choice}**.*\n\n",
+            title=f"📊 Co-op Leaderboard — {cat_enum.value}",
             color=discord.Color.gold(),
             timestamp=datetime.now(),
         )
@@ -1285,25 +1288,27 @@ def register_commands(
         for rank, r in enumerate(records[:20], start=1):
             badge = medals[rank - 1] if rank <= 3 else f"`#{rank}`"
 
-            if cat_choice == LeaderboardCategory.GOALS.value:
+            if cat_enum == LeaderboardCategory.GOALS:
                 stat_str = f"**{r['goals']}** goals"
-            elif cat_choice == LeaderboardCategory.ASSISTS.value:
+            elif cat_enum == LeaderboardCategory.ASSISTS:
                 stat_str = f"**{r['assists']}** assists"
-            elif cat_choice == LeaderboardCategory.GA.value:
+            elif cat_enum == LeaderboardCategory.GA:
                 stat_str = f"**{r['ga']}** G/A"
-            elif cat_choice == LeaderboardCategory.WINS.value:
+            elif cat_enum == LeaderboardCategory.WINS:
                 stat_str = f"**{r['wins']}** wins"
-            elif cat_choice == LeaderboardCategory.LOSSES.value:
+            elif cat_enum == LeaderboardCategory.LOSSES:
                 stat_str = f"**{r['losses']}** losses"
-            elif cat_choice == LeaderboardCategory.WIN_RATE.value:
+            elif cat_enum == LeaderboardCategory.DRAWS:
+                stat_str = f"**{r['draws']}** draws"
+            elif cat_enum == LeaderboardCategory.WIN_RATE:
                 stat_str = f"**{r['win_rate']:.1f}%**"
-            elif cat_choice == LeaderboardCategory.MATCHES_PLAYED.value:
+            elif cat_enum == LeaderboardCategory.MATCHES_PLAYED:
                 stat_str = f"**{r['matches_played']}** matches"
-            elif cat_choice == LeaderboardCategory.GPG.value:
+            elif cat_enum == LeaderboardCategory.GPG:
                 stat_str = f"**{r['gpg']:.2f}** GPG"
-            elif cat_choice == LeaderboardCategory.APG.value:
+            elif cat_enum == LeaderboardCategory.APG:
                 stat_str = f"**{r['apg']:.2f}** APG"
-            elif cat_choice == LeaderboardCategory.GAPG.value:
+            elif cat_enum == LeaderboardCategory.GAPG:
                 stat_str = f"**{r['gapg']:.2f}** GAPG"
             else:
                 stat_str = f"**{r['goals']}** goals"
@@ -1311,7 +1316,7 @@ def register_commands(
             lines.append(f"{badge} **{r['player']}** — {stat_str}")
 
         embed.description = "\n".join(lines)
-        embed.set_footer(text=f"Total registered teammates: {len(records)} • Synced from matches.xlsx")
+        embed.set_footer(text=f"Total registered teammates: {len(records)} • Sorted by {cat_enum.value}")
         await interaction.followup.send(embed=embed)
 
     # 4. /record

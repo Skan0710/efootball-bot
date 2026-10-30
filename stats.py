@@ -79,7 +79,7 @@ def get_leaderboard(
     Deterministic tie-breaking is applied to guarantee consistent rankings.
     """
     if isinstance(category, str):
-        category = LeaderboardCategory(category)
+        category = LeaderboardCategory.from_str(category)
 
     records = list(aggregates.values())
 
