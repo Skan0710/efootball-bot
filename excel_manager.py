@@ -242,12 +242,16 @@ class ExcelManager:
             # If Col 7 was empty, try legacy player rows or notes
             if not p_stats and m_id in legacy_player_map:
                 p_stats = legacy_player_map[m_id]
-                # Cache serialized stats to Col 7
-                ws_matches.cell(
-                    row=row_idx,
-                    column=7,
-                    value=json.dumps([{"player": s.player, "goals": s.goals, "assists": s.assists, "result": s.result.value} for s in p_stats]),
-                )
+
+            # Cache / update serialized stats to Col 7 with canonical player names
+            if p_stats:
+                clean_json = json.dumps([{"player": s.player, "goals": s.goals, "assists": s.assists, "result": s.result.value} for s in p_stats])
+                if clean_json != p_json:
+                    ws_matches.cell(
+                        row=row_idx,
+                        column=7,
+                        value=clean_json,
+                    )
 
             matches_info.append({
                 "match_id": m_id,

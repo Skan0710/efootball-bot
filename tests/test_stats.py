@@ -188,6 +188,12 @@ def test_player_name_canonicalization() -> None:
     assert canonicalize_player_name("SkanRocky") == "Skan"
     assert canonicalize_player_name("skan") == "Skan"
 
+    # Azlan
+    assert canonicalize_player_name("Azlan") == "Azlan"
+    assert canonicalize_player_name("azlan") == "Azlan"
+    assert canonicalize_player_name("Azlan19Siuu") == "Azlan"
+    assert canonicalize_player_name("azlan19siuu") == "Azlan"
+
 
 def test_multiple_aliases_merged_into_single_player_record() -> None:
     """Verifies stats for different aliases merge into one single canonical player record."""
@@ -199,6 +205,8 @@ def test_multiple_aliases_merged_into_single_player_record() -> None:
         PlayerStat(player="SkanRocky", goals=2, assists=1, result=MatchResult.WIN),
         PlayerStat(player="SoNaka", goals=1, assists=0, result=MatchResult.WIN),
         PlayerStat(player="Son", goals=1, assists=2, result=MatchResult.LOSS),
+        PlayerStat(player="Azlan", goals=1, assists=1, result=MatchResult.WIN),
+        PlayerStat(player="Azlan19Siuu", goals=2, assists=0, result=MatchResult.WIN),
     ]
 
     aggregates = calculate_player_aggregates(raw_stats)
@@ -232,4 +240,14 @@ def test_multiple_aliases_merged_into_single_player_record() -> None:
     assert naka_rec.matches_played == 2
     assert naka_rec.goals == 2
     assert naka_rec.assists == 2
+
+    # All Azlan variants merged into "Azlan"
+    azlan_rec = get_player_record("Azlan", aggregates)
+    assert azlan_rec is not None
+    assert azlan_rec.player == "Azlan"
+    assert azlan_rec.matches_played == 2
+    assert azlan_rec.goals == 3
+    assert azlan_rec.assists == 1
+    assert get_player_record("Azlan19Siuu", aggregates) == azlan_rec
+
 
