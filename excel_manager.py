@@ -315,6 +315,31 @@ class ExcelManager:
                         except Exception:
                             pass
 
+        # Also preserve any manual player entries from PlayerStats sheet if present
+        if SHEET_PLAYER_STATS in wb.sheetnames:
+            ws_p_old = wb[SHEET_PLAYER_STATS]
+            for row in ws_p_old.iter_rows(min_row=2, values_only=True):
+                if row and len(row) > 1 and row[1]:
+                    old_p = canonicalize_player_name(str(row[1]).strip())
+                    if old_p and old_p not in player_data:
+                        try:
+                            old_m_id = str(row[0]).strip() if row[0] else "Manual"
+                            old_mp = int(row[2]) if len(row) > 2 and row[2] is not None else 0
+                            old_g = int(row[3]) if len(row) > 3 and row[3] is not None else 0
+                            old_a = int(row[4]) if len(row) > 4 and row[4] is not None else 0
+                            player_data[old_p] = {
+                                "player": old_p,
+                                "matches": old_mp,
+                                "goals": old_g,
+                                "assists": old_a,
+                                "wins": 0,
+                                "losses": 0,
+                                "latest_match": old_m_id,
+                            }
+                        except Exception:
+                            pass
+
+
         # 1. Completely rebuild PlayerStats sheet (clubbed, 1 row per player)
         if SHEET_PLAYER_STATS in wb.sheetnames:
             del wb[SHEET_PLAYER_STATS]

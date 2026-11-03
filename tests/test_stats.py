@@ -194,6 +194,18 @@ def test_player_name_canonicalization() -> None:
     assert canonicalize_player_name("Azlan19Siuu") == "Azlan"
     assert canonicalize_player_name("azlan19siuu") == "Azlan"
 
+    # Jonny
+    assert canonicalize_player_name("Jonny") == "Jonny"
+    assert canonicalize_player_name("jonny") == "Jonny"
+    assert canonicalize_player_name("JonnyH") == "Jonny"
+    assert canonicalize_player_name("jonnyh") == "Jonny"
+    assert canonicalize_player_name("itsJonnyH") == "Jonny"
+    assert canonicalize_player_name("itsjonnyh") == "Jonny"
+    assert canonicalize_player_name("itsJonaldinhoH") == "Jonny"
+    assert canonicalize_player_name("itsjonaldinhoh") == "Jonny"
+    assert canonicalize_player_name("Jonaldinho") == "Jonny"
+
+
 
 def test_multiple_aliases_merged_into_single_player_record() -> None:
     """Verifies stats for different aliases merge into one single canonical player record."""
@@ -207,6 +219,9 @@ def test_multiple_aliases_merged_into_single_player_record() -> None:
         PlayerStat(player="Son", goals=1, assists=2, result=MatchResult.LOSS),
         PlayerStat(player="Azlan", goals=1, assists=1, result=MatchResult.WIN),
         PlayerStat(player="Azlan19Siuu", goals=2, assists=0, result=MatchResult.WIN),
+        PlayerStat(player="JonnyH", goals=1, assists=0, result=MatchResult.WIN),
+        PlayerStat(player="itsJonnyH", goals=0, assists=1, result=MatchResult.LOSS),
+        PlayerStat(player="itsJonaldinhoH", goals=1, assists=1, result=MatchResult.WIN),
     ]
 
     aggregates = calculate_player_aggregates(raw_stats)
@@ -249,5 +264,17 @@ def test_multiple_aliases_merged_into_single_player_record() -> None:
     assert azlan_rec.goals == 3
     assert azlan_rec.assists == 1
     assert get_player_record("Azlan19Siuu", aggregates) == azlan_rec
+
+    # All Jonny variants merged into "Jonny"
+    jonny_rec = get_player_record("Jonny", aggregates)
+    assert jonny_rec is not None
+    assert jonny_rec.player == "Jonny"
+    assert jonny_rec.matches_played == 3
+    assert jonny_rec.goals == 2
+    assert jonny_rec.assists == 2
+    assert get_player_record("JonnyH", aggregates) == jonny_rec
+    assert get_player_record("itsJonnyH", aggregates) == jonny_rec
+    assert get_player_record("itsJonaldinhoH", aggregates) == jonny_rec
+
 
 
