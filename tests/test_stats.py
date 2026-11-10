@@ -205,6 +205,11 @@ def test_player_name_canonicalization() -> None:
     assert canonicalize_player_name("itsjonaldinhoh") == "Jonny"
     assert canonicalize_player_name("Jonaldinho") == "Jonny"
 
+    # Ashy
+    assert canonicalize_player_name("Ashy") == "Ashy"
+    assert canonicalize_player_name("ashy") == "Ashy"
+    assert canonicalize_player_name("MrAshy21") == "Ashy"
+    assert canonicalize_player_name("mrashy21") == "Ashy"
 
 
 def test_multiple_aliases_merged_into_single_player_record() -> None:
@@ -222,6 +227,8 @@ def test_multiple_aliases_merged_into_single_player_record() -> None:
         PlayerStat(player="JonnyH", goals=1, assists=0, result=MatchResult.WIN),
         PlayerStat(player="itsJonnyH", goals=0, assists=1, result=MatchResult.LOSS),
         PlayerStat(player="itsJonaldinhoH", goals=1, assists=1, result=MatchResult.WIN),
+        PlayerStat(player="Ashy", goals=1, assists=0, result=MatchResult.WIN),
+        PlayerStat(player="MrAshy21", goals=2, assists=1, result=MatchResult.LOSS),
     ]
 
     aggregates = calculate_player_aggregates(raw_stats)
@@ -275,6 +282,15 @@ def test_multiple_aliases_merged_into_single_player_record() -> None:
     assert get_player_record("JonnyH", aggregates) == jonny_rec
     assert get_player_record("itsJonnyH", aggregates) == jonny_rec
     assert get_player_record("itsJonaldinhoH", aggregates) == jonny_rec
+
+    # All Ashy variants merged into "Ashy"
+    ashy_rec = get_player_record("Ashy", aggregates)
+    assert ashy_rec is not None
+    assert ashy_rec.player == "Ashy"
+    assert ashy_rec.matches_played == 2
+    assert ashy_rec.goals == 3
+    assert ashy_rec.assists == 1
+    assert get_player_record("MrAshy21", aggregates) == ashy_rec
 
 
 

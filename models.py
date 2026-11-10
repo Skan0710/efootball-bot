@@ -39,6 +39,9 @@ PLAYER_CANONICAL_MAP: Dict[str, str] = {
     "itsjonaldinhoh": "Jonny",
     "jonaldinho": "Jonny",
     "jonaldinhoh": "Jonny",
+    # Ashy (Ashy, MrAshy21)
+    "ashy": "Ashy",
+    "mrashy21": "Ashy",
 }
 
 
@@ -46,8 +49,8 @@ def canonicalize_player_name(name: str) -> str:
     """Maps player name variants and OCR artifacts to canonical registered player names.
 
     Ensures that aliases like 'lillym', 'maple', 'AnnieSynx', 'SoNaka', 'Son', 'SuriBG',
-    'SkanRocky', 'Azlan19Siuu', 'JonnyH', 'itsJonnyH', 'itsJonaldinhoH', etc. all resolve
-    to single canonical identities.
+    'SkanRocky', 'Azlan19Siuu', 'JonnyH', 'itsJonnyH', 'itsJonaldinhoH', 'MrAshy21',
+    etc. all resolve to single canonical identities.
     """
     if not name:
         return ""
@@ -59,6 +62,8 @@ def canonicalize_player_name(name: str) -> str:
         return PLAYER_CANONICAL_MAP[clean]
 
     # Prefix / stem checks for OCR variations and noise
+    if "ashy" in clean:
+        return "Ashy"
     if "jonny" in clean or "jonaldinho" in clean:
         return "Jonny"
     if clean.startswith("azlan"):
