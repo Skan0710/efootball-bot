@@ -29,6 +29,7 @@ from models import (
 from ocr import extract_player_stats_from_screenshot, validate_image_file
 from stats import (
     calculate_player_aggregates,
+    calculate_potw_rankings,
     get_all_teammates,
     get_leaderboard,
     get_player_record,
@@ -1465,3 +1466,56 @@ def register_commands(
         embed.description = "\n".join(lines)
         embed.set_footer(text="Alphabetical order by name • Fetched from Excel")
         await interaction.response.send_message(embed=embed)
+
+    # 7. /potw
+    @tree.command(
+        name="potw",
+        description="Show Player of the Week ranked by 0.4*Goals + 0.4*Assists + 0.2*Wins (Mon–Sun).",
+    )
+    @app_commands.describe(weeks_ago="0 for current week (default), 1 for last week, etc.")
+    async def potw(interaction: discord.Interaction, weeks_ago: Optional[int] = 0) -> None:
+        err = check_guild_and_channel(interaction, config)
+        if err:
+            await interaction.response.send_message(f"❌ {err}", ephemeral=True)
+            return
+
+        await interaction.response.defer()
+
+        bounded_weeks = max(0, weeks_ago or 0)
+        all_matches = await excel_manager.get_all_matches()
+        rankings, week_start, week_end = calculate_potw_rankings(
+            all_matches, weeks_ago=bounded_weeks
+        )
+        week_range = f"{week_start.strftime('%d %b')} – {week_end.strftime('%d %b %Y')}"
+
+        if not rankings:
+            await interaction.followup.send(
+                f"📋 No matches recorded for week **{week_range}**.",
+            )
+            return
+
+        winner = rankings[0]
+        embed = discord.Embed(
+            title=f"🏆 Player of the Week — {week_range}",
+            description=(
+                f"👑 **{winner['player']}** leads with **{winner['score']:.2f}** pts "
+                f"(`{winner['goals']}G`, `{winner['assists']}A`, `{winner['wins']}W` in `{winner['matches_played']}` MP)\n"
+            ),
+            color=discord.Color.gold(),
+            timestamp=datetime.now(),
+        )
+
+        medals = ["🥇", "🥈", "🥉"]
+        lines = []
+        for rank, r in enumerate(rankings, start=1):
+            badge = medals[rank - 1] if rank <= 3 else f"`#{rank}`"
+            lines.append(
+                f"{badge} **{r['player']}** — **{r['score']:.2f}** pts "
+                f"({r['goals']}G · {r['assists']}A · {r['wins']}W · {r['matches_played']} MP)"
+            )
+
+        embed.add_field(name="Weekly Standings", value="\n".join(lines), inline=False)
+        embed.set_footer(
+            text="Score = 0.4×Goals + 0.4×Assists + 0.2×Wins • Mon–Sun Calendar Week"
+        )
+        await interaction.followup.send(embed=embed)

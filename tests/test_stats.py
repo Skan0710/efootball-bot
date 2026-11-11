@@ -1,10 +1,13 @@
 """Unit tests for statistics, calculations, and leaderboard generation."""
 
+from datetime import datetime
+
 import pytest
 
-from models import LeaderboardCategory, MatchResult, PlayerAggregateRecord, PlayerStat
+from models import LeaderboardCategory, MatchRecord, MatchResult, PlayerAggregateRecord, PlayerStat
 from stats import (
     calculate_player_aggregates,
+    calculate_potw_rankings,
     get_all_teammates,
     get_leaderboard,
     get_player_record,
@@ -312,6 +315,66 @@ def test_hattrick_counting_and_leaderboard_ranking() -> None:
     assert [r.player for r in ranked] == ["Suri", "Skan", "Annie"]
     assert LeaderboardCategory.from_str("hattrick") == LeaderboardCategory.HATTRICK
     assert LeaderboardCategory.from_str("hat-trick") == LeaderboardCategory.HATTRICK
+
+
+def test_potw_rankings_calendar_week_and_weights() -> None:
+    """Verifies Mon-Sun calendar week filtering and 0.4G + 0.4A + 0.2W formula."""
+    # Reference date: Wednesday Nov 11, 2026 -> Week is Mon Nov 9 to Sun Nov 15, 2026
+    ref = datetime(2026, 11, 11, 12, 0, 0)
+
+    matches = [
+        # Sunday Nov 8 (last week - should be excluded for weeks_ago=0, included for weeks_ago=1)
+        MatchRecord(
+            match_id="M-OLD",
+            date="2026-11-08 23:59:59",
+            result=MatchResult.HOME_WIN,
+            submitted_by="Skan",
+            player_stats=[
+                PlayerStat(player="Annie", goals=5, assists=5, result=MatchResult.WIN),
+            ],
+        ),
+        # Monday Nov 9 00:00:00 (start of current calendar week - included)
+        MatchRecord(
+            match_id="M-MON",
+            date="2026-11-09 00:00:00",
+            result=MatchResult.HOME_WIN,
+            submitted_by="Skan",
+            player_stats=[
+                PlayerStat(player="Suri", goals=2, assists=1, result=MatchResult.WIN),
+                PlayerStat(player="Skan", goals=1, assists=2, result=MatchResult.LOSS),
+            ],
+        ),
+        # Wednesday Nov 11 (current week - included)
+        MatchRecord(
+            match_id="M-WED",
+            date="2026-11-11 10:00:00",
+            result=MatchResult.HOME_WIN,
+            submitted_by="Skan",
+            player_stats=[
+                PlayerStat(player="Suri", goals=3, assists=2, result=MatchResult.WIN),
+                PlayerStat(player="Ashy", goals=2, assists=3, result=MatchResult.WIN),
+            ],
+        ),
+    ]
+
+    rankings, w_start, w_end = calculate_potw_rankings(matches, reference_date=ref, weeks_ago=0)
+    assert w_start == datetime(2026, 11, 9, 0, 0, 0)
+    assert w_end.date() == datetime(2026, 11, 15).date()
+
+    # Suri: 5G, 3A, 2W -> 0.4*5 + 0.4*3 + 0.2*2 = 2.0 + 1.2 + 0.4 = 3.6
+    # Ashy: 2G, 3A, 1W -> 0.4*2 + 0.4*3 + 0.2*1 = 0.8 + 1.2 + 0.2 = 2.2
+    # Skan: 1G, 2A, 0W -> 0.4*1 + 0.4*2 + 0.2*0 = 0.4 + 0.8 + 0.0 = 1.2
+    assert [r["player"] for r in rankings] == ["Suri", "Ashy", "Skan"]
+    assert rankings[0]["score"] == 3.6
+    assert rankings[1]["score"] == 2.2
+    assert rankings[2]["score"] == 1.2
+
+    # Previous week (weeks_ago=1) includes M-OLD (Annie: 5G, 5A, 1W -> 4.2)
+    prev_rankings, _, _ = calculate_potw_rankings(matches, reference_date=ref, weeks_ago=1)
+    assert len(prev_rankings) == 1
+    assert prev_rankings[0]["player"] == "Annie"
+    assert prev_rankings[0]["score"] == 4.2
+
 
 
 
