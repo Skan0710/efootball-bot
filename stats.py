@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from itertools import combinations
 from typing import Dict, List, Optional, Tuple
 
 from models import (
@@ -258,3 +259,82 @@ def calculate_potw_rankings(
         reverse=True,
     )
     return ranked, week_start, week_end
+
+
+def calculate_best_teams(matches: List[MatchRecord]) -> List[dict]:
+    """Calculates co-op teammate duo records ranked by most wins together.
+
+    Order-independent and case-insensitive: e.g., 'Skan & Suri' and 'Suri & Skan'
+    always resolve to the same teammate pair.
+    """
+    team_data: Dict[Tuple[str, str], dict] = {}
+
+    def _record_side(side_stats: List[Tuple[str, str, PlayerStat]], is_win: bool) -> None:
+        if len(side_stats) < 2:
+            return
+        for (k1, p1, s1), (k2, p2, s2) in combinations(side_stats, 2):
+            if k1 <= k2:
+                pair_key = (k1, k2)
+                players = (p1, p2)
+            else:
+                pair_key = (k2, k1)
+                players = (p2, p1)
+
+            if pair_key not in team_data:
+                team_data[pair_key] = {
+                    "players": players,
+                    "team_name": f"{players[0]} & {players[1]}",
+                    "matches_played": 0,
+                    "wins": 0,
+                    "losses": 0,
+                    "goals": 0,
+                    "assists": 0,
+                }
+            entry = team_data[pair_key]
+            entry["matches_played"] += 1
+            if is_win:
+                entry["wins"] += 1
+            else:
+                entry["losses"] += 1
+            entry["goals"] += s1.goals + s2.goals
+            entry["assists"] += s1.assists + s2.assists
+
+    for match in matches:
+        winners_map: Dict[str, Tuple[str, PlayerStat]] = {}
+        losers_map: Dict[str, Tuple[str, PlayerStat]] = {}
+        for stat in match.player_stats:
+            canonical = canonicalize_player_name(stat.player)
+            key = canonical.strip().lower()
+            if not key:
+                continue
+            if stat.result in (MatchResult.WIN, MatchResult.HOME_WIN):
+                winners_map[key] = (canonical, stat)
+            elif stat.result in (MatchResult.LOSS, MatchResult.AWAY_WIN):
+                losers_map[key] = (canonical, stat)
+
+        _record_side(
+            [(k, v[0], v[1]) for k, v in sorted(winners_map.items(), key=lambda it: it[0])],
+            is_win=True,
+        )
+        _record_side(
+            [(k, v[0], v[1]) for k, v in sorted(losers_map.items(), key=lambda it: it[0])],
+            is_win=False,
+        )
+
+    teams: List[dict] = []
+    for entry in team_data.values():
+        mp = entry["matches_played"]
+        entry["win_rate"] = round((entry["wins"] / mp) * 100.0, 1) if mp > 0 else 0.0
+        teams.append(entry)
+
+    teams.sort(
+        key=lambda t: (
+            t["wins"],
+            t["win_rate"],
+            t["matches_played"],
+            t["goals"],
+            t["assists"],
+        ),
+        reverse=True,
+    )
+    return teams

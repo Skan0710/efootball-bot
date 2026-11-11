@@ -6,6 +6,7 @@ import pytest
 
 from models import LeaderboardCategory, MatchRecord, MatchResult, PlayerAggregateRecord, PlayerStat
 from stats import (
+    calculate_best_teams,
     calculate_player_aggregates,
     calculate_potw_rankings,
     get_all_teammates,
@@ -374,6 +375,126 @@ def test_potw_rankings_calendar_week_and_weights() -> None:
     assert len(prev_rankings) == 1
     assert prev_rankings[0]["player"] == "Annie"
     assert prev_rankings[0]["score"] == 4.2
+
+
+def test_best_team_rankings() -> None:
+    """Verifies teammate duo wins, win-rate tie-breaking, and alias merging."""
+    matches = [
+        MatchRecord(
+            match_id="M-1",
+            date="2026-11-10 12:00:00",
+            result=MatchResult.HOME_WIN,
+            submitted_by="Skan",
+            player_stats=[
+                PlayerStat(player="Suri", goals=2, assists=1, result=MatchResult.WIN),
+                PlayerStat(player="MrAshy21", goals=1, assists=2, result=MatchResult.WIN),
+                PlayerStat(player="Skan", goals=0, assists=0, result=MatchResult.LOSS),
+                PlayerStat(player="Annie", goals=0, assists=0, result=MatchResult.LOSS),
+            ],
+        ),
+        MatchRecord(
+            match_id="M-2",
+            date="2026-11-11 12:00:00",
+            result=MatchResult.HOME_WIN,
+            submitted_by="Skan",
+            player_stats=[
+                PlayerStat(player="Ashy", goals=2, assists=0, result=MatchResult.WIN),
+                PlayerStat(player="Suri", goals=1, assists=2, result=MatchResult.WIN),
+                PlayerStat(player="Skan", goals=1, assists=0, result=MatchResult.LOSS),
+                PlayerStat(player="Annie", goals=0, assists=1, result=MatchResult.LOSS),
+            ],
+        ),
+        MatchRecord(
+            match_id="M-3",
+            date="2026-11-11 15:00:00",
+            result=MatchResult.HOME_WIN,
+            submitted_by="Skan",
+            player_stats=[
+                PlayerStat(player="Skan", goals=2, assists=0, result=MatchResult.WIN),
+                PlayerStat(player="Suri", goals=1, assists=1, result=MatchResult.WIN),
+                PlayerStat(player="Ashy", goals=0, assists=1, result=MatchResult.LOSS),
+                PlayerStat(player="Annie", goals=1, assists=0, result=MatchResult.LOSS),
+            ],
+        ),
+    ]
+
+    teams = calculate_best_teams(matches)
+    assert teams[0]["team_name"] == "Ashy & Suri"
+    assert teams[0]["wins"] == 2
+    assert teams[0]["losses"] == 0
+    assert teams[0]["win_rate"] == 100.0
+    assert teams[0]["goals"] == 6
+
+    skan_suri = next(t for t in teams if t["team_name"] == "Skan & Suri")
+    assert skan_suri["wins"] == 1
+    assert skan_suri["losses"] == 0
+
+    annie_skan = next(t for t in teams if t["team_name"] == "Annie & Skan")
+    assert annie_skan["wins"] == 0
+    assert annie_skan["losses"] == 2
+
+
+def test_best_team_order_and_case_independence() -> None:
+    """Verifies Skan & Suri and Suri & Skan (and case/alias variants) count as the exact same team."""
+    matches = [
+        MatchRecord(
+            match_id="M-A",
+            date="2026-11-11 10:00:00",
+            result=MatchResult.HOME_WIN,
+            submitted_by="Skan",
+            player_stats=[
+                PlayerStat(player="Skan", goals=2, assists=1, result=MatchResult.WIN),
+                PlayerStat(player="Suri", goals=1, assists=1, result=MatchResult.WIN),
+            ],
+        ),
+        MatchRecord(
+            match_id="M-B",
+            date="2026-11-11 11:00:00",
+            result=MatchResult.HOME_WIN,
+            submitted_by="Skan",
+            player_stats=[
+                PlayerStat(player="Suri", goals=2, assists=0, result=MatchResult.WIN),
+                PlayerStat(player="Skan", goals=1, assists=2, result=MatchResult.WIN),
+            ],
+        ),
+        MatchRecord(
+            match_id="M-C",
+            date="2026-11-11 12:00:00",
+            result=MatchResult.AWAY_WIN,
+            submitted_by="Skan",
+            player_stats=[
+                PlayerStat(player="GuestB", goals=1, assists=0, result=MatchResult.LOSS),
+                PlayerStat(player="GuestA", goals=0, assists=1, result=MatchResult.LOSS),
+            ],
+        ),
+        MatchRecord(
+            match_id="M-D",
+            date="2026-11-11 13:00:00",
+            result=MatchResult.AWAY_WIN,
+            submitted_by="Skan",
+            player_stats=[
+                PlayerStat(player="guesta", goals=2, assists=0, result=MatchResult.LOSS),
+                PlayerStat(player="guestb", goals=1, assists=1, result=MatchResult.LOSS),
+            ],
+        ),
+    ]
+
+    teams = calculate_best_teams(matches)
+    assert len(teams) == 2
+
+    skan_suri = teams[0]
+    assert skan_suri["team_name"] == "Skan & Suri"
+    assert skan_suri["matches_played"] == 2
+    assert skan_suri["wins"] == 2
+    assert skan_suri["goals"] == 6
+
+    guests = teams[1]
+    assert guests["team_name"] == "GuestA & GuestB"
+    assert guests["matches_played"] == 2
+    assert guests["losses"] == 2
+    assert guests["goals"] == 4
+
+
 
 
 

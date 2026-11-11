@@ -48,6 +48,7 @@ def test_command_registration_names(test_config: BotConfig, tmp_path: Path) -> N
         "matches",
         "teammates",
         "potw",
+        "best-team",
     }
     assert registered_names == expected_commands
 
@@ -420,5 +421,74 @@ async def test_delete_all_matches_flow(tmp_path: Path) -> None:
 
     matches_after = await manager.get_all_matches()
     assert len(matches_after) == 0
+
+
+@pytest.mark.asyncio
+async def test_potw_best_team_and_hattrick_leaderboard_commands(test_config: BotConfig) -> None:
+    """Verifies /potw, /best-team, and /leaderboard category:hattrick command embeds."""
+    from datetime import datetime
+
+    bot = EFootballBot(test_config)
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    manager = bot.excel_manager
+
+    await manager.save_match(
+        MatchRecord(
+            match_id="M-CMD-1",
+            date=now_str,
+            result=MatchResult.HOME_WIN,
+            submitted_by="Skan",
+            player_stats=[
+                PlayerStat(player="Suri", goals=3, assists=2, result=MatchResult.WIN),
+                PlayerStat(player="Ashy", goals=2, assists=3, result=MatchResult.WIN),
+                PlayerStat(player="Skan", goals=0, assists=0, result=MatchResult.LOSS),
+                PlayerStat(player="Annie", goals=0, assists=0, result=MatchResult.LOSS),
+            ],
+        )
+    )
+
+    def _make_interaction() -> MagicMock:
+        inter = MagicMock(spec=discord.Interaction)
+        inter.guild_id = test_config.guild_id
+        inter.channel_id = test_config.allowed_channel_id
+        inter.response = MagicMock()
+        inter.response.defer = AsyncMock()
+        inter.response.send_message = AsyncMock()
+        inter.followup = MagicMock()
+        inter.followup.send = AsyncMock()
+        return inter
+
+    # 1. Test /potw
+    potw_cmd = bot.tree.get_command("potw")
+    assert potw_cmd is not None
+    inter_potw = _make_interaction()
+    await potw_cmd.callback(inter_potw, 0)
+    inter_potw.followup.send.assert_called_once()
+    potw_embed = inter_potw.followup.send.call_args[1]["embed"]
+    assert "Player of the Week" in potw_embed.title
+    assert "Suri" in potw_embed.description
+    assert "Ashy" in potw_embed.fields[0].value
+
+    # 2. Test /best-team
+    best_team_cmd = bot.tree.get_command("best-team")
+    assert best_team_cmd is not None
+    inter_team = _make_interaction()
+    await best_team_cmd.callback(inter_team)
+    inter_team.followup.send.assert_called_once()
+    team_embed = inter_team.followup.send.call_args[1]["embed"]
+    assert "Best Co-op Teams" in team_embed.title
+    assert "Ashy & Suri" in team_embed.description
+
+    # 3. Test /leaderboard category:Hattrick
+    lb_cmd = bot.tree.get_command("leaderboard")
+    assert lb_cmd is not None
+    inter_lb = _make_interaction()
+    choice = app_commands.Choice(name="Hattrick (3+ goals in a game)", value="Hattrick")
+    await lb_cmd.callback(inter_lb, choice)
+    inter_lb.followup.send.assert_called_once()
+    lb_embed = inter_lb.followup.send.call_args[1]["embed"]
+    assert "Hattrick" in lb_embed.title
+    assert "**Suri** — **1** hattrick" in lb_embed.description
+
 
 

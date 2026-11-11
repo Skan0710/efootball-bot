@@ -28,6 +28,7 @@ from models import (
 )
 from ocr import extract_player_stats_from_screenshot, validate_image_file
 from stats import (
+    calculate_best_teams,
     calculate_player_aggregates,
     calculate_potw_rankings,
     get_all_teammates,
@@ -1518,4 +1519,53 @@ def register_commands(
         embed.set_footer(
             text="Score = 0.4×Goals + 0.4×Assists + 0.2×Wins • Mon–Sun Calendar Week"
         )
+        await interaction.followup.send(embed=embed)
+
+    # 8. /best-team
+    @tree.command(
+        name="best-team",
+        description="Show teammates ranked by most co-op wins played together.",
+    )
+    async def best_team(interaction: discord.Interaction) -> None:
+        err = check_guild_and_channel(interaction, config)
+        if err:
+            await interaction.response.send_message(f"❌ {err}", ephemeral=True)
+            return
+
+        await interaction.response.defer()
+
+        all_matches = await excel_manager.get_all_matches()
+        teams = calculate_best_teams(all_matches)
+        winning_teams = [t for t in teams if t["wins"] > 0]
+
+        if not winning_teams:
+            await interaction.followup.send(
+                "📋 No co-op teammate wins have been recorded yet.",
+            )
+            return
+
+        top = winning_teams[0]
+        embed = discord.Embed(
+            title="🤝 Best Co-op Teams — Most Wins Together",
+            description=(
+                f"🏆 **{top['team_name']}** lead with **{top['wins']}** "
+                f"{'win' if top['wins'] == 1 else 'wins'} together "
+                f"(`{top['wins']}W / {top['losses']}L` · `{top['win_rate']:.1f}% WR`)\n"
+            ),
+            color=discord.Color.green(),
+            timestamp=datetime.now(),
+        )
+
+        medals = ["🥇", "🥈", "🥉"]
+        lines = []
+        for rank, t in enumerate(teams[:20], start=1):
+            badge = medals[rank - 1] if rank <= 3 else f"`#{rank}`"
+            win_word = "win" if t["wins"] == 1 else "wins"
+            lines.append(
+                f"{badge} **{t['team_name']}** — **{t['wins']}** {win_word} "
+                f"({t['wins']}W / {t['losses']}L · {t['win_rate']:.1f}% WR · {t['goals']}G)"
+            )
+
+        embed.add_field(name="Teammate Duo Rankings", value="\n".join(lines), inline=False)
+        embed.set_footer(text=f"Total teammate pairings: {len(teams)} • Sorted by wins together")
         await interaction.followup.send(embed=embed)
