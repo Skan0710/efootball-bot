@@ -1229,6 +1229,7 @@ def register_commands(
             app_commands.Choice(name="GPG (Goals Per Game)", value=LeaderboardCategory.GPG.value),
             app_commands.Choice(name="APG (Assists Per Game)", value=LeaderboardCategory.APG.value),
             app_commands.Choice(name="GAPG (G/A Per Game)", value=LeaderboardCategory.GAPG.value),
+            app_commands.Choice(name="Hattrick (3+ goals in a game)", value=LeaderboardCategory.HATTRICK.value),
         ]
     )
     async def leaderboard(
@@ -1274,6 +1275,8 @@ def register_commands(
             records.sort(key=lambda r: (r["apg"], r["assists"], r["matches_played"]), reverse=True)
         elif cat_enum == LeaderboardCategory.GAPG:
             records.sort(key=lambda r: (r["gapg"], r["ga"], r["matches_played"]), reverse=True)
+        elif cat_enum == LeaderboardCategory.HATTRICK:
+            records.sort(key=lambda r: (r.get("hattricks", 0), r["goals"], r["matches_played"]), reverse=True)
         else:
             records.sort(key=lambda r: (r["goals"], r["assists"]), reverse=True)
 
@@ -1310,6 +1313,9 @@ def register_commands(
                 stat_str = f"**{r['apg']:.2f}** APG"
             elif cat_enum == LeaderboardCategory.GAPG:
                 stat_str = f"**{r['gapg']:.2f}** GAPG"
+            elif cat_enum == LeaderboardCategory.HATTRICK:
+                ht = r.get("hattricks", 0)
+                stat_str = f"**{ht}** {'hattrick' if ht == 1 else 'hattricks'}"
             else:
                 stat_str = f"**{r['goals']}** goals"
 
@@ -1354,6 +1360,7 @@ def register_commands(
         embed.add_field(name="Goals", value=str(p_record["goals"]), inline=True)
         embed.add_field(name="Assists", value=str(p_record["assists"]), inline=True)
         embed.add_field(name="G/A (Goals + Assists)", value=str(p_record["ga"]), inline=True)
+        embed.add_field(name="Hattricks (3+ Goals)", value=str(p_record.get("hattricks", 0)), inline=True)
         embed.add_field(name="Goals Per Game (GPG)", value=f"{p_record['gpg']:.2f}", inline=True)
         embed.add_field(name="Assists Per Game (APG)", value=f"{p_record['apg']:.2f}", inline=True)
         embed.add_field(name="G/A Per Game (GAPG)", value=f"{p_record['gapg']:.2f}", inline=True)

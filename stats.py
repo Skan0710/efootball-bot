@@ -29,6 +29,7 @@ def calculate_player_aggregates(player_stats: List[PlayerStat]) -> Dict[str, Pla
                 "wins": 0,
                 "losses": 0,
                 "draws": 0,
+                "hattricks": 0,
             }
         else:
             # Keep latest non-empty casing
@@ -38,6 +39,8 @@ def calculate_player_aggregates(player_stats: List[PlayerStat]) -> Dict[str, Pla
         data["matches"] += 1
         data["goals"] += stat.goals
         data["assists"] += stat.assists
+        if stat.goals >= 3:
+            data["hattricks"] += 1
 
         if stat.result in (MatchResult.HOME_WIN, MatchResult.WIN):
             data["wins"] += 1
@@ -56,6 +59,7 @@ def calculate_player_aggregates(player_stats: List[PlayerStat]) -> Dict[str, Pla
             wins=d["wins"],
             losses=d["losses"],
             draws=d["draws"],
+            hattricks=d["hattricks"],
         )
 
     return records
@@ -136,6 +140,11 @@ def get_leaderboard(
     elif category == LeaderboardCategory.GAPG:
         records.sort(
             key=lambda r: (r.gapg, r.ga, r.goals, r.matches_played),
+            reverse=True,
+        )
+    elif category == LeaderboardCategory.HATTRICK:
+        records.sort(
+            key=lambda r: (r.hattricks, r.goals, r.matches_played),
             reverse=True,
         )
     else:

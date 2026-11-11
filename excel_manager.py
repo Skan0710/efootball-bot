@@ -63,6 +63,7 @@ LEADERBOARD_HEADERS = [
     "GPG",
     "APG",
     "GAPG",
+    "Hattricks",
 ]
 
 HEADER_FILL = PatternFill(start_color="1F4E79", end_color="1F4E79", fill_type="solid")
@@ -278,12 +279,15 @@ class ExcelManager:
                         "assists": 0,
                         "wins": 0,
                         "losses": 0,
+                        "hattricks": 0,
                         "latest_match": m["match_id"],
                     }
                 data = player_data[p_name]
                 data["matches"] += 1
                 data["goals"] += stat.goals
                 data["assists"] += stat.assists
+                if stat.goals >= 3:
+                    data["hattricks"] += 1
                 data["latest_match"] = m["match_id"]
                 if stat.result in (MatchResult.HOME_WIN, MatchResult.WIN):
                     data["wins"] += 1
@@ -303,6 +307,7 @@ class ExcelManager:
                             old_a = int(row[3]) if len(row) > 3 and row[3] is not None else 0
                             old_w = int(row[5]) if len(row) > 5 and row[5] is not None else 0
                             old_l = int(row[6]) if len(row) > 6 and row[6] is not None else 0
+                            old_ht = int(row[12]) if len(row) > 12 and row[12] is not None else 0
                             player_data[old_p] = {
                                 "player": old_p,
                                 "matches": old_mp,
@@ -310,6 +315,7 @@ class ExcelManager:
                                 "assists": old_a,
                                 "wins": old_w,
                                 "losses": old_l,
+                                "hattricks": old_ht,
                                 "latest_match": "Manual",
                             }
                         except Exception:
@@ -334,6 +340,7 @@ class ExcelManager:
                                 "assists": old_a,
                                 "wins": 0,
                                 "losses": 0,
+                                "hattricks": 0,
                                 "latest_match": old_m_id,
                             }
                         except Exception:
@@ -395,6 +402,7 @@ class ExcelManager:
                 f"=IF(B{r}>0, C{r}/B{r}, 0)",
                 f"=IF(B{r}>0, D{r}/B{r}, 0)",
                 f"=IF(B{r}>0, E{r}/B{r}, 0)",
+                d.get("hattricks", 0),
             ]
             ws_lb.append(row_data)
             for c_idx in range(1, len(row_data) + 1):
@@ -708,6 +716,7 @@ class ExcelManager:
 
                 gapg_raw = ws.cell(row=r, column=12).value
                 gapg = float(gapg_raw) if isinstance(gapg_raw, (int, float)) else (round(ga / mp, 2) if mp > 0 else 0.0)
+                hattricks = _safe_int(13)
 
                 records.append({
                     "player": player,
@@ -723,6 +732,7 @@ class ExcelManager:
                     "gpg": gpg,
                     "apg": apg,
                     "gapg": gapg,
+                    "hattricks": hattricks,
                 })
             return records
         finally:

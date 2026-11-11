@@ -293,4 +293,26 @@ def test_multiple_aliases_merged_into_single_player_record() -> None:
     assert get_player_record("MrAshy21", aggregates) == ashy_rec
 
 
+def test_hattrick_counting_and_leaderboard_ranking() -> None:
+    """Verifies hattricks (3+ goals in a single game) are counted and ranked properly."""
+    raw_stats = [
+        PlayerStat(player="Suri", goals=3, assists=1, result=MatchResult.WIN),
+        PlayerStat(player="Suri", goals=4, assists=0, result=MatchResult.WIN),
+        PlayerStat(player="Suri", goals=2, assists=2, result=MatchResult.LOSS),
+        PlayerStat(player="Skan", goals=3, assists=0, result=MatchResult.WIN),
+        PlayerStat(player="Annie", goals=2, assists=3, result=MatchResult.WIN),
+    ]
+
+    aggs = calculate_player_aggregates(raw_stats)
+    assert aggs["suri"].hattricks == 2
+    assert aggs["skan"].hattricks == 1
+    assert aggs["annie"].hattricks == 0
+
+    ranked = get_leaderboard(aggs, LeaderboardCategory.HATTRICK)
+    assert [r.player for r in ranked] == ["Suri", "Skan", "Annie"]
+    assert LeaderboardCategory.from_str("hattrick") == LeaderboardCategory.HATTRICK
+    assert LeaderboardCategory.from_str("hat-trick") == LeaderboardCategory.HATTRICK
+
+
+
 
