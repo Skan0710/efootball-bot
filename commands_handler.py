@@ -30,6 +30,7 @@ from models import (
 from ocr import extract_player_stats_from_screenshot, validate_image_file
 from stats import (
     calculate_best_teams,
+    calculate_hall_of_fame,
     calculate_head_to_head,
     calculate_player_aggregates,
     calculate_player_form,
@@ -2013,3 +2014,69 @@ def register_commands(
         )
         embed.set_footer(text="◀️ / ▶️ highlights the leader in each stat • Fetched from Excel")
         await interaction.response.send_message(embed=embed)
+
+    # 14. /hall-of-fame
+    @tree.command(
+        name="hall-of-fame",
+        description="View all-time club records, biggest wins, single-match highs, and milestones.",
+    )
+    async def hall_of_fame(interaction: discord.Interaction) -> None:
+        err = check_guild_and_channel(interaction, config)
+        if err:
+            await interaction.response.send_message(f"❌ {err}", ephemeral=True)
+            return
+
+        await interaction.response.defer()
+
+        all_matches = await excel_manager.get_all_matches()
+        hof = calculate_hall_of_fame(all_matches)
+        if not hof:
+            await interaction.followup.send(
+                "📋 No matches recorded yet. Once matches are saved, the Hall of Fame will appear here!",
+            )
+            return
+
+        margin_lines = [format_match_scoreline(m) for m, _, _ in hof["biggest_margin_matches"][:3]]
+        total_lines = [format_match_scoreline(m) for m, _, _ in hof["highest_total_matches"][:3]]
+        clean_lines = [format_match_scoreline(m) for m, _, _ in reversed(hof["clean_sheets"])][:3]
+
+        sections = [
+            f"🔥 **Biggest Win Margin (+{hof['biggest_margin']} goals)**\n" + "\n".join(margin_lines),
+            f"🎯 **Highest-Scoring Match ({hof['highest_total']} total goals)**\n" + "\n".join(total_lines),
+            f"⚽ **Most Goals in One Match ({hof['max_single_goals']} goals)**\n"
+            + ", ".join(f"**{p}**" for p in hof["max_single_goals_players"]),
+            f"🅰️ **Most Assists in One Match ({hof['max_single_assists']} assists)**\n"
+            + ", ".join(f"**{p}**" for p in hof["max_single_assists_players"]),
+            f"🌟 **Most G/A in One Match ({hof['max_single_ga']} G/A)**\n"
+            + ", ".join(f"**{p}**" for p in hof["max_single_ga_players"]),
+        ]
+
+        if hof["best_win_streak"] > 0:
+            sections.append(
+                f"🚀 **Longest Win Streak ({hof['best_win_streak']} wins in a row)**\n"
+                + ", ".join(f"**{p}**" for p in hof["best_win_streak_players"])
+            )
+
+        if clean_lines:
+            sections.append(
+                f"🧤 **Clean Sheet Victories ({len(hof['clean_sheets'])} total)**\n" + "\n".join(clean_lines)
+            )
+
+        career_bits = []
+        if hof["top_scorer"]:
+            career_bits.append(f"Top Scorer: **{hof['top_scorer'].player}** ({hof['top_scorer'].goals}G)")
+        if hof["top_assister"]:
+            career_bits.append(f"Playmaker: **{hof['top_assister'].player}** ({hof['top_assister'].assists}A)")
+        if hof["hattrick_king"] and hof["hattrick_king"].hattricks > 0:
+            career_bits.append(f"Hattrick King: **{hof['hattrick_king'].player}** ({hof['hattrick_king'].hattricks})")
+        if career_bits:
+            sections.append("👑 **All-Time Legends**\n" + " · ".join(career_bits))
+
+        embed = discord.Embed(
+            title="🏛️ eFootball Co-op Hall of Fame",
+            description="\n\n".join(sections),
+            color=discord.Color.gold(),
+            timestamp=datetime.now(),
+        )
+        embed.set_footer(text=f"Computed across {hof['total_matches']} all-time matches")
+        await interaction.followup.send(embed=embed)

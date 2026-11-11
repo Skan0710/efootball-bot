@@ -5,6 +5,7 @@ from __future__ import annotations
 import calendar
 from datetime import datetime, timedelta
 from itertools import combinations
+import re
 from typing import Dict, List, Optional, Tuple
 
 from models import (
@@ -602,4 +603,129 @@ def calculate_head_to_head(
         "player2": p2,
         "together": together,
         "against": against,
+    }
+
+
+def extract_match_scores(match: MatchRecord) -> Tuple[int, int]:
+    """Extracts (home_score, away_score) from notes or player goal totals."""
+    if match.notes:
+        score_match = re.match(
+            r"^\s*(?:Score:\s*)?(?P<left>.+?)\s+(?P<hs>\d+)\s*-\s*(?P<as>\d+)\s+(?P<right>.+?)(?:\s*\([^)]*\))?\s*$",
+            match.notes.strip(),
+            flags=re.IGNORECASE,
+        )
+        if score_match:
+            return int(score_match.group("hs")), int(score_match.group("as"))
+
+    win_goals = sum(
+        p.goals for p in match.player_stats if p.result in (MatchResult.WIN, MatchResult.HOME_WIN)
+    )
+    loss_goals = sum(
+        p.goals for p in match.player_stats if p.result in (MatchResult.LOSS, MatchResult.AWAY_WIN)
+    )
+    if match.result in (MatchResult.AWAY_WIN, MatchResult.LOSS):
+        return loss_goals, win_goals
+    return win_goals, loss_goals
+
+
+def calculate_hall_of_fame(matches: List[MatchRecord]) -> dict:
+    """Computes all-time club records, single-match highs, margins, and streak leaders."""
+    if not matches:
+        return {}
+
+    biggest_margin = -1
+    biggest_margin_matches: List[Tuple[MatchRecord, int, int]] = []
+    highest_total = -1
+    highest_total_matches: List[Tuple[MatchRecord, int, int]] = []
+    clean_sheets: List[Tuple[MatchRecord, int, int]] = []
+
+    max_goals_val = -1
+    max_goals_holders: List[str] = []
+    max_assists_val = -1
+    max_assists_holders: List[str] = []
+    max_ga_val = -1
+    max_ga_holders: List[str] = []
+
+    all_stats: List[PlayerStat] = []
+    unique_players: Dict[str, str] = {}
+
+    for match in matches:
+        hs, a_s = extract_match_scores(match)
+        margin = abs(hs - a_s)
+        total = hs + a_s
+
+        if margin > biggest_margin:
+            biggest_margin = margin
+            biggest_margin_matches = [(match, hs, a_s)]
+        elif margin == biggest_margin:
+            biggest_margin_matches.append((match, hs, a_s))
+
+        if total > highest_total:
+            highest_total = total
+            highest_total_matches = [(match, hs, a_s)]
+        elif total == highest_total:
+            highest_total_matches.append((match, hs, a_s))
+
+        if (hs > 0 and a_s == 0) or (a_s > 0 and hs == 0):
+            clean_sheets.append((match, hs, a_s))
+
+        for stat in match.player_stats:
+            all_stats.append(stat)
+            c_name = canonicalize_player_name(stat.player)
+            if c_name:
+                unique_players[c_name.lower()] = c_name
+
+            if stat.goals > max_goals_val:
+                max_goals_val = stat.goals
+                max_goals_holders = [c_name]
+            elif stat.goals == max_goals_val and c_name not in max_goals_holders:
+                max_goals_holders.append(c_name)
+
+            if stat.assists > max_assists_val:
+                max_assists_val = stat.assists
+                max_assists_holders = [c_name]
+            elif stat.assists == max_assists_val and c_name not in max_assists_holders:
+                max_assists_holders.append(c_name)
+
+            ga = stat.goals + stat.assists
+            if ga > max_ga_val:
+                max_ga_val = ga
+                max_ga_holders = [c_name]
+            elif ga == max_ga_val and c_name not in max_ga_holders:
+                max_ga_holders.append(c_name)
+
+    best_streak_val = 0
+    best_streak_holders: List[str] = []
+    for p_name in sorted(unique_players.values(), key=str.lower):
+        f_data = calculate_player_form(p_name, matches)
+        st = f_data["longest_win_streak"]
+        if st > best_streak_val:
+            best_streak_val = st
+            best_streak_holders = [p_name]
+        elif st == best_streak_val and st > 0:
+            best_streak_holders.append(p_name)
+
+    aggs = calculate_player_aggregates(all_stats)
+    hattrick_leader = get_leaderboard(aggs, LeaderboardCategory.HATTRICK)
+    goal_leader = get_leaderboard(aggs, LeaderboardCategory.GOALS)
+    assist_leader = get_leaderboard(aggs, LeaderboardCategory.ASSISTS)
+
+    return {
+        "total_matches": len(matches),
+        "biggest_margin": biggest_margin,
+        "biggest_margin_matches": biggest_margin_matches,
+        "highest_total": highest_total,
+        "highest_total_matches": highest_total_matches,
+        "clean_sheets": clean_sheets,
+        "max_single_goals": max_goals_val,
+        "max_single_goals_players": max_goals_holders,
+        "max_single_assists": max_assists_val,
+        "max_single_assists_players": max_assists_holders,
+        "max_single_ga": max_ga_val,
+        "max_single_ga_players": max_ga_holders,
+        "best_win_streak": best_streak_val,
+        "best_win_streak_players": best_streak_holders,
+        "hattrick_king": hattrick_leader[0] if hattrick_leader else None,
+        "top_scorer": goal_leader[0] if goal_leader else None,
+        "top_assister": assist_leader[0] if assist_leader else None,
     }

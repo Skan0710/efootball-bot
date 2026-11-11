@@ -54,6 +54,7 @@ def test_command_registration_names(test_config: BotConfig, tmp_path: Path) -> N
         "form",
         "h2h",
         "compare",
+        "hall-of-fame",
     }
     assert registered_names == expected_commands
 
@@ -712,6 +713,47 @@ async def test_h2h_and_compare_commands(test_config: BotConfig) -> None:
     assert "Player Comparison — Suri vs Skan" in cmp_embed.title
     assert "Skill Rating" in cmp_embed.description
     assert "\n\n" in cmp_embed.description
+
+
+@pytest.mark.asyncio
+async def test_hall_of_fame_command(test_config: BotConfig) -> None:
+    """Verifies /hall-of-fame renders club records and milestones cleanly."""
+    bot = EFootballBot(test_config)
+    await bot.excel_manager.save_match(
+        MatchRecord(
+            match_id="M-HOF-CMD",
+            date="2026-11-11 16:00:00",
+            result=MatchResult.HOME_WIN,
+            submitted_by="Skan",
+            notes="Score: Suri & Ashy 5 - 0 Skan & Annie (Home Win)",
+            player_stats=[
+                PlayerStat(player="Suri", goals=3, assists=2, result=MatchResult.WIN),
+                PlayerStat(player="Ashy", goals=2, assists=3, result=MatchResult.WIN),
+                PlayerStat(player="Skan", goals=0, assists=0, result=MatchResult.LOSS),
+                PlayerStat(player="Annie", goals=0, assists=0, result=MatchResult.LOSS),
+            ],
+        )
+    )
+
+    hof_cmd = bot.tree.get_command("hall-of-fame")
+    assert hof_cmd is not None
+
+    inter = MagicMock(spec=discord.Interaction)
+    inter.guild_id = test_config.guild_id
+    inter.channel_id = test_config.allowed_channel_id
+    inter.response = MagicMock()
+    inter.response.defer = AsyncMock()
+    inter.followup = MagicMock()
+    inter.followup.send = AsyncMock()
+
+    await hof_cmd.callback(inter)
+    inter.followup.send.assert_called_once()
+    embed = inter.followup.send.call_args[1]["embed"]
+    assert "Hall of Fame" in embed.title
+    assert "Biggest Win Margin (+5 goals)" in embed.description
+    assert "Suri & Ashy" in embed.description
+    assert "\n\n" in embed.description
+
 
 
 

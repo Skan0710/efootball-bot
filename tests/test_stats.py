@@ -7,6 +7,7 @@ import pytest
 from models import LeaderboardCategory, MatchRecord, MatchResult, PlayerAggregateRecord, PlayerStat
 from stats import (
     calculate_best_teams,
+    calculate_hall_of_fame,
     calculate_head_to_head,
     calculate_player_aggregates,
     calculate_player_form,
@@ -668,6 +669,57 @@ def test_calculate_head_to_head() -> None:
     assert h2h["against"]["p1_wins"] == 1
     assert h2h["against"]["p2_wins"] == 1
     assert h2h["against"]["p1_win_rate"] == 50.0
+
+
+def test_calculate_hall_of_fame() -> None:
+    """Verifies biggest margin, highest total score, single-game highs, clean sheets, and streaks."""
+    matches = [
+        MatchRecord(
+            match_id="M-HOF-1",
+            date="2026-11-10 10:00:00",
+            result=MatchResult.HOME_WIN,
+            submitted_by="Skan",
+            notes="Score: Suri & Ashy 5 - 0 Skan & Annie (Home Win)",
+            player_stats=[
+                PlayerStat(player="Suri", goals=3, assists=2, result=MatchResult.WIN),
+                PlayerStat(player="Ashy", goals=2, assists=3, result=MatchResult.WIN),
+                PlayerStat(player="Skan", goals=0, assists=0, result=MatchResult.LOSS),
+                PlayerStat(player="Annie", goals=0, assists=0, result=MatchResult.LOSS),
+            ],
+        ),
+        MatchRecord(
+            match_id="M-HOF-2",
+            date="2026-11-11 10:00:00",
+            result=MatchResult.AWAY_WIN,
+            submitted_by="Skan",
+            notes="Score: Skan & Lilly 3 - 5 Suri & Azlan (Away Win)",
+            player_stats=[
+                PlayerStat(player="Skan", goals=1, assists=1, result=MatchResult.LOSS),
+                PlayerStat(player="Lilly", goals=2, assists=0, result=MatchResult.LOSS),
+                PlayerStat(player="Suri", goals=4, assists=0, result=MatchResult.WIN),
+                PlayerStat(player="Azlan", goals=1, assists=3, result=MatchResult.WIN),
+            ],
+        ),
+    ]
+
+    hof = calculate_hall_of_fame(matches)
+    assert hof["total_matches"] == 2
+    assert hof["biggest_margin"] == 5
+    assert hof["biggest_margin_matches"][0][0].match_id == "M-HOF-1"
+    assert hof["highest_total"] == 8
+    assert hof["highest_total_matches"][0][0].match_id == "M-HOF-2"
+    assert hof["max_single_goals"] == 4
+    assert hof["max_single_goals_players"] == ["Suri"]
+    assert hof["max_single_assists"] == 3
+    assert set(hof["max_single_assists_players"]) == {"Ashy", "Azlan"}
+    assert hof["max_single_ga"] == 5
+    assert set(hof["max_single_ga_players"]) == {"Suri", "Ashy"}
+    assert hof["best_win_streak"] == 2
+    assert hof["best_win_streak_players"] == ["Suri"]
+    assert len(hof["clean_sheets"]) == 1
+    assert hof["hattrick_king"].player == "Suri"
+    assert hof["hattrick_king"].hattricks == 2
+
 
 
 
