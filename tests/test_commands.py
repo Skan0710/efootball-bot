@@ -50,6 +50,7 @@ def test_command_registration_names(test_config: BotConfig, tmp_path: Path) -> N
         "potw",
         "potm",
         "best-team",
+        "fair-teams",
     }
     assert registered_names == expected_commands
 
@@ -550,6 +551,66 @@ async def test_matches_command_only_shows_team_players_and_score(test_config: Bo
     assert "Submitted by" not in embed.description
     assert "3G" not in embed.description
     assert "2026-11-11" not in embed.description
+
+
+@pytest.mark.asyncio
+async def test_fair_teams_command_and_modal(test_config: BotConfig) -> None:
+    """Verifies /fair-teams modal opening and 4/5/6 player balancing embed."""
+    bot = EFootballBot(test_config)
+    await bot.excel_manager.save_match(
+        MatchRecord(
+            match_id="M-FT-1",
+            date="2026-11-11 12:00:00",
+            result=MatchResult.HOME_WIN,
+            submitted_by="Skan",
+            player_stats=[
+                PlayerStat(player="Suri", goals=4, assists=2, result=MatchResult.WIN),
+                PlayerStat(player="Ashy", goals=2, assists=1, result=MatchResult.WIN),
+                PlayerStat(player="Skan", goals=1, assists=0, result=MatchResult.LOSS),
+                PlayerStat(player="Annie", goals=0, assists=1, result=MatchResult.LOSS),
+            ],
+        )
+    )
+
+    ft_cmd = bot.tree.get_command("fair-teams")
+    assert ft_cmd is not None
+
+    # 1. Without inline players -> sends FairTeamsModal
+    inter_modal = MagicMock(spec=discord.Interaction)
+    inter_modal.guild_id = test_config.guild_id
+    inter_modal.channel_id = test_config.allowed_channel_id
+    inter_modal.response = MagicMock()
+    inter_modal.response.send_modal = AsyncMock()
+
+    choice_4 = app_commands.Choice(name="4 players (2v2)", value=4)
+    await ft_cmd.callback(inter_modal, choice_4, None)
+    inter_modal.response.send_modal.assert_called_once()
+    modal = inter_modal.response.send_modal.call_args[0][0]
+    assert modal.expected_count == 4
+
+    # Submit modal with 4 names
+    modal.names_input._value = "Suri, Ashy, Skan, Annie"
+    inter_sub = MagicMock(spec=discord.Interaction)
+    inter_sub.response = MagicMock()
+    inter_sub.response.send_message = AsyncMock()
+    await modal.on_submit(inter_sub)
+    inter_sub.response.send_message.assert_called_once()
+    embed = inter_sub.response.send_message.call_args[1]["embed"]
+    assert "Fair Teams (2v2" in embed.title
+    assert len(embed.fields) == 2
+
+    # 2. Inline 5 players -> directly responds with 3v2 balanced embed
+    inter_inline = MagicMock(spec=discord.Interaction)
+    inter_inline.guild_id = test_config.guild_id
+    inter_inline.channel_id = test_config.allowed_channel_id
+    inter_inline.response = MagicMock()
+    inter_inline.response.send_message = AsyncMock()
+    choice_5 = app_commands.Choice(name="5 players (3v2)", value=5)
+    await ft_cmd.callback(inter_inline, choice_5, "Suri, Ashy, Skan, Annie, Azlan")
+    inter_inline.response.send_message.assert_called_once()
+    embed5 = inter_inline.response.send_message.call_args[1]["embed"]
+    assert "Fair Teams (3v2" in embed5.title
+
 
 
 

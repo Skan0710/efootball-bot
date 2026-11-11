@@ -32,6 +32,7 @@ from stats import (
     calculate_player_aggregates,
     calculate_potm_rankings,
     calculate_potw_rankings,
+    generate_fair_teams,
     get_all_teammates,
     get_leaderboard,
     get_player_record,
@@ -760,6 +761,83 @@ class AddMatchTextModal(discord.ui.Modal, title="Edit Match Players, Stats & Res
         )
 
         await interaction.response.send_message(embed=preview_embed, view=view, ephemeral=True)
+
+
+def parse_fair_team_names(raw_names: str) -> List[str]:
+    """Splits comma, newline, or ampersand separated player names cleanly."""
+    if not raw_names:
+        return []
+    parts = re.split(r"[\n,]+|\s+(?:and|&|\+)\s*", raw_names.strip(), flags=re.IGNORECASE)
+    return [p.strip() for p in parts if p.strip()]
+
+
+def build_fair_teams_embed(split: dict, player_count: int) -> discord.Embed:
+    """Builds the Discord embed displaying balanced co-op teams."""
+    mode_label = {4: "2v2", 5: "3v2", 6: "3v3"}.get(player_count, f"{len(split['team_a'])}v{len(split['team_b'])}")
+    embed = discord.Embed(
+        title=f"⚖️ Fair Teams ({mode_label} — {player_count} Players)",
+        description=f"Power Difference: **{split['rating_diff']:.2f}** pts\n",
+        color=discord.Color.blue(),
+        timestamp=datetime.now(),
+    )
+
+    def _fmt_side(players: List[dict]) -> str:
+        lines = []
+        for p in players:
+            tag = " (Unranked)" if p.get("is_unranked") else ""
+            lines.append(f"• **{p['player']}** — {p['rating']:.1f} rating{tag}")
+        return "\n\n".join(lines)
+
+    embed.add_field(
+        name=f"🔵 Team A (Total: {split['team_a_rating']:.1f})",
+        value=_fmt_side(split["team_a"]),
+        inline=True,
+    )
+    embed.add_field(
+        name=f"🔴 Team B (Total: {split['team_b_rating']:.1f})",
+        value=_fmt_side(split["team_b"]),
+        inline=True,
+    )
+    embed.set_footer(text="Rating = 0.4×Win% + 15×GAPG + 5×GPG • Balanced from Excel history")
+    return embed
+
+
+class FairTeamsModal(discord.ui.Modal):
+    """Modal prompting user to enter 4, 5, or 6 player names for team balancing."""
+
+    def __init__(self, expected_count: int, excel_manager: ExcelManager) -> None:
+        super().__init__(title=f"Fair Teams — Enter {expected_count} Players")
+        self.expected_count = expected_count
+        self.excel_manager = excel_manager
+
+        sample_names = ["Suri", "Skan", "Ashy", "Annie", "Azlan", "Jonny"][:expected_count]
+        self.names_input = discord.ui.TextInput(
+            label=f"Enter {expected_count} Player Names (comma or new line)",
+            style=discord.TextStyle.paragraph,
+            placeholder=", ".join(sample_names),
+            required=True,
+            max_length=300,
+        )
+        self.add_item(self.names_input)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        raw_names = parse_fair_team_names(self.names_input.value)
+        if len(raw_names) != self.expected_count:
+            await interaction.response.send_message(
+                f"❌ You selected **{self.expected_count}** players, but entered **{len(raw_names)}**. Please enter exactly {self.expected_count} player names.",
+                ephemeral=True,
+            )
+            return
+
+        records = await self.excel_manager.get_leaderboard_from_sheet()
+        try:
+            split = generate_fair_teams(raw_names, records)
+        except ValueError as exc:
+            await interaction.response.send_message(f"❌ {exc}", ephemeral=True)
+            return
+
+        embed = build_fair_teams_embed(split, self.expected_count)
+        await interaction.response.send_message(embed=embed)
 
 
 class DeleteConfirmView(discord.ui.View):
@@ -1665,3 +1743,54 @@ def register_commands(
         )
         embed.set_footer(text=f"Total teammate pairings: {len(teams)} • Sorted by wins together")
         await interaction.followup.send(embed=embed)
+
+    # 10. /fair-teams
+    @tree.command(
+        name="fair-teams",
+        description="Split 4, 5, or 6 players into the fairest possible co-op teams.",
+    )
+    @app_commands.describe(
+        player_count="Choose how many players are playing (4, 5, or 6)",
+        players="Optional: enter names right here (comma separated), or leave blank for popup",
+    )
+    @app_commands.choices(
+        player_count=[
+            app_commands.Choice(name="4 players (2v2)", value=4),
+            app_commands.Choice(name="5 players (3v2)", value=5),
+            app_commands.Choice(name="6 players (3v3)", value=6),
+        ]
+    )
+    async def fair_teams(
+        interaction: discord.Interaction,
+        player_count: app_commands.Choice[int],
+        players: Optional[str] = None,
+    ) -> None:
+        err = check_guild_and_channel(interaction, config)
+        if err:
+            await interaction.response.send_message(f"❌ {err}", ephemeral=True)
+            return
+
+        expected_count = int(player_count.value if hasattr(player_count, "value") else player_count)
+        if not players or not players.strip():
+            await interaction.response.send_modal(
+                FairTeamsModal(expected_count=expected_count, excel_manager=excel_manager)
+            )
+            return
+
+        raw_names = parse_fair_team_names(players)
+        if len(raw_names) != expected_count:
+            await interaction.response.send_message(
+                f"❌ You selected **{expected_count}** players, but entered **{len(raw_names)}**. Please enter exactly {expected_count} player names.",
+                ephemeral=True,
+            )
+            return
+
+        records = await excel_manager.get_leaderboard_from_sheet()
+        try:
+            split = generate_fair_teams(raw_names, records)
+        except ValueError as exc:
+            await interaction.response.send_message(f"❌ {exc}", ephemeral=True)
+            return
+
+        embed = build_fair_teams_embed(split, expected_count)
+        await interaction.response.send_message(embed=embed)

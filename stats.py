@@ -372,3 +372,94 @@ def calculate_best_teams(matches: List[MatchRecord]) -> List[dict]:
         reverse=True,
     )
     return teams
+
+
+def compute_player_rating(record: dict | PlayerAggregateRecord) -> float:
+    """Computes a balanced historical skill rating from Win%, GAPG, and GPG."""
+    if isinstance(record, dict):
+        mp = int(record.get("matches_played", 0))
+        wr = float(record.get("win_rate", 0.0))
+        gapg = float(record.get("gapg", 0.0))
+        gpg = float(record.get("gpg", 0.0))
+    else:
+        mp = record.matches_played
+        wr = record.win_rate
+        gapg = record.gapg
+        gpg = record.gpg
+
+    if mp <= 0:
+        return 0.0
+    return round(0.4 * wr + 15.0 * gapg + 5.0 * gpg, 2)
+
+
+def generate_fair_teams(
+    player_names: List[str],
+    leaderboard_records: List[dict],
+) -> dict:
+    """Splits 4, 5, or 6 players into the fairest possible Team A vs Team B matchup."""
+    canonical_players: List[str] = []
+    seen_keys: set[str] = set()
+    for raw in player_names:
+        c = canonicalize_player_name(raw)
+        if not c:
+            continue
+        k = c.lower()
+        if k in seen_keys:
+            raise ValueError(f"Duplicate player '{c}' detected. Please enter unique player names.")
+        seen_keys.add(k)
+        canonical_players.append(c)
+
+    count = len(canonical_players)
+    if count not in (4, 5, 6):
+        raise ValueError(f"Expected 4, 5, or 6 unique players, got {count}.")
+
+    ratings_by_key: Dict[str, float] = {}
+    ranked_ratings: List[float] = []
+    for rec in leaderboard_records:
+        r_val = compute_player_rating(rec)
+        key = canonicalize_player_name(str(rec.get("player", ""))).lower()
+        if key:
+            ratings_by_key[key] = r_val
+        if int(rec.get("matches_played", 0)) > 0:
+            ranked_ratings.append(r_val)
+
+    default_rating = round(sum(ranked_ratings) / len(ranked_ratings), 2) if ranked_ratings else 40.0
+
+    player_entries = [
+        {
+            "player": name,
+            "rating": ratings_by_key.get(name.lower(), 0.0) or default_rating,
+            "is_unranked": ratings_by_key.get(name.lower(), 0.0) == 0.0,
+        }
+        for name in canonical_players
+    ]
+
+    team_a_size = 2 if count == 4 else 3
+    best_split = None
+    best_key = None
+
+    indices = list(range(count))
+    for combo in combinations(indices, team_a_size):
+        # Avoid symmetric mirror partitions when teams are equal size
+        if count in (4, 6) and 0 not in combo:
+            continue
+        combo_set = set(combo)
+        team_a = [player_entries[i] for i in combo]
+        team_b = [player_entries[i] for i in indices if i not in combo_set]
+        sum_a = round(sum(p["rating"] for p in team_a), 2)
+        sum_b = round(sum(p["rating"] for p in team_b), 2)
+        diff = round(abs(sum_a - sum_b), 2)
+        avg_diff = round(abs((sum_a / len(team_a)) - (sum_b / len(team_b))), 2)
+        score_key = (diff, avg_diff)
+        if best_key is None or score_key < best_key:
+            best_key = score_key
+            best_split = {
+                "team_a": sorted(team_a, key=lambda x: x["rating"], reverse=True),
+                "team_b": sorted(team_b, key=lambda x: x["rating"], reverse=True),
+                "team_a_rating": sum_a,
+                "team_b_rating": sum_b,
+                "rating_diff": diff,
+            }
+
+    assert best_split is not None
+    return best_split

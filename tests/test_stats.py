@@ -10,6 +10,7 @@ from stats import (
     calculate_player_aggregates,
     calculate_potm_rankings,
     calculate_potw_rankings,
+    generate_fair_teams,
     get_all_teammates,
     get_leaderboard,
     get_player_record,
@@ -551,6 +552,41 @@ def test_potm_rankings_calendar_month_and_rollover() -> None:
     assert len(dec_rankings) == 1
     assert dec_rankings[0]["player"] == "Skan"
     assert dec_rankings[0]["score"] == 2.6
+
+
+def test_generate_fair_teams_4_5_6() -> None:
+    """Verifies optimal team balancing for 4 (2v2), 5 (3v2), and 6 (3v3) players."""
+    records = [
+        {"player": "Suri", "matches_played": 10, "win_rate": 80.0, "gapg": 3.0, "gpg": 2.0},   # rating 87.0
+        {"player": "Ashy", "matches_played": 4, "win_rate": 50.0, "gapg": 2.0, "gpg": 1.0},    # rating 55.0
+        {"player": "Skan", "matches_played": 10, "win_rate": 40.0, "gapg": 1.6, "gpg": 1.0},   # rating 45.0
+        {"player": "Lilly", "matches_played": 5, "win_rate": 0.0, "gapg": 0.6, "gpg": 0.6},    # rating 12.0
+        {"player": "Azlan", "matches_played": 8, "win_rate": 50.0, "gapg": 1.5, "gpg": 0.5},   # rating 45.0
+        {"player": "Annie", "matches_played": 8, "win_rate": 50.0, "gapg": 1.2, "gpg": 0.6},   # rating 41.0
+    ]
+
+    # 4 players: [87, 55, 45, 12] -> optimal is (87+12=99) vs (55+45=100), diff=1.0
+    split_4 = generate_fair_teams(["Suri", "Ashy", "SkanRocky", "maple"], records)
+    assert len(split_4["team_a"]) == 2
+    assert len(split_4["team_b"]) == 2
+    assert split_4["rating_diff"] == 1.0
+
+    # 5 players: [87, 55, 45, 45, 12] -> optimal is (55+45+12=112) vs (87+45=132), diff=20.0
+    split_5 = generate_fair_teams(["Suri", "Ashy", "Skan", "Lilly", "Azlan"], records)
+    assert len(split_5["team_a"]) == 3
+    assert len(split_5["team_b"]) == 2
+    assert split_5["rating_diff"] == 20.0
+
+    # 6 players: 3v3 split
+    split_6 = generate_fair_teams(["Suri", "Ashy", "Skan", "Lilly", "Azlan", "Annie"], records)
+    assert len(split_6["team_a"]) == 3
+    assert len(split_6["team_b"]) == 3
+    assert split_6["rating_diff"] <= 5.0
+
+    # Duplicate name should raise ValueError
+    with pytest.raises(ValueError, match="Duplicate"):
+        generate_fair_teams(["Suri", "Suri", "Skan", "Ashy"], records)
+
 
 
 
