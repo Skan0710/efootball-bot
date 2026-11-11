@@ -51,6 +51,7 @@ def test_command_registration_names(test_config: BotConfig, tmp_path: Path) -> N
         "potm",
         "best-team",
         "fair-teams",
+        "form",
     }
     assert registered_names == expected_commands
 
@@ -610,6 +611,57 @@ async def test_fair_teams_command_and_modal(test_config: BotConfig) -> None:
     inter_inline.response.send_message.assert_called_once()
     embed5 = inter_inline.response.send_message.call_args[1]["embed"]
     assert "Fair Teams (3v2" in embed5.title
+
+
+@pytest.mark.asyncio
+async def test_form_and_record_player_autocomplete(test_config: BotConfig) -> None:
+    """Verifies /form and /record list registered players via autocomplete and render form."""
+    bot = EFootballBot(test_config)
+    await bot.excel_manager.save_match(
+        MatchRecord(
+            match_id="M-FORM-1",
+            date="2026-11-11 12:00:00",
+            result=MatchResult.HOME_WIN,
+            submitted_by="Skan",
+            notes="Score: Suri & Ashy 3 - 1 Skan & Annie (Home Win)",
+            player_stats=[
+                PlayerStat(player="Suri", goals=2, assists=1, result=MatchResult.WIN),
+                PlayerStat(player="Ashy", goals=1, assists=2, result=MatchResult.WIN),
+                PlayerStat(player="Skan", goals=1, assists=0, result=MatchResult.LOSS),
+                PlayerStat(player="Annie", goals=0, assists=1, result=MatchResult.LOSS),
+            ],
+        )
+    )
+
+    form_cmd = bot.tree.get_command("form")
+    record_cmd = bot.tree.get_command("record")
+    assert form_cmd is not None and record_cmd is not None
+
+    # Both /form and /record expose autocomplete callbacks listing registered players
+    inter_ac = MagicMock(spec=discord.Interaction)
+    form_choices = await form_cmd._params["player"].autocomplete(inter_ac, "")
+    record_choices = await record_cmd._params["player"].autocomplete(inter_ac, "")
+    form_names = {c.value for c in form_choices}
+    record_names = {c.value for c in record_choices}
+    assert {"Suri", "Ashy", "Skan", "Annie"}.issubset(form_names)
+    assert {"Suri", "Ashy", "Skan", "Annie"}.issubset(record_names)
+
+    # Execute /form for Suri
+    inter_form = MagicMock(spec=discord.Interaction)
+    inter_form.guild_id = test_config.guild_id
+    inter_form.channel_id = test_config.allowed_channel_id
+    inter_form.response = MagicMock()
+    inter_form.response.defer = AsyncMock()
+    inter_form.followup = MagicMock()
+    inter_form.followup.send = AsyncMock()
+
+    await form_cmd.callback(inter_form, "Suri")
+    inter_form.followup.send.assert_called_once()
+    embed = inter_form.followup.send.call_args[1]["embed"]
+    assert "Recent Form — Suri" in embed.title
+    assert "1 Win Streak" in embed.description
+    assert "2G, 1A" in embed.description
+
 
 
 

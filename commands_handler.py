@@ -9,7 +9,7 @@ import re
 import tempfile
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import aiohttp
 import discord
@@ -19,6 +19,7 @@ from discord.ext import commands
 from config import BotConfig
 from excel_manager import ExcelManager
 from models import (
+    PLAYER_CANONICAL_MAP,
     LeaderboardCategory,
     MatchRecord,
     MatchResult,
@@ -30,6 +31,7 @@ from ocr import extract_player_stats_from_screenshot, validate_image_file
 from stats import (
     calculate_best_teams,
     calculate_player_aggregates,
+    calculate_player_form,
     calculate_potm_rankings,
     calculate_potw_rankings,
     generate_fair_teams,
@@ -1035,7 +1037,32 @@ def register_commands(
     config: BotConfig,
     excel_manager: ExcelManager,
 ) -> None:
-    """Registers the six required eFootball slash commands to the bot command tree."""
+    """Registers eFootball slash commands to the bot command tree."""
+
+    async def player_autocomplete(
+        interaction: discord.Interaction,
+        current: str,
+    ) -> List[app_commands.Choice[str]]:
+        """Provides clickable dropdown list of registered players from Excel and alias map."""
+        candidates: Dict[str, str] = {}
+        for canonical_name in set(PLAYER_CANONICAL_MAP.values()):
+            candidates[canonical_name.lower()] = canonical_name
+        try:
+            records = await excel_manager.get_leaderboard_from_sheet()
+            for r in records:
+                p = str(r.get("player", "")).strip()
+                if p:
+                    candidates[p.lower()] = p
+        except Exception:
+            pass
+
+        query = current.strip().lower()
+        sorted_names = sorted(candidates.values(), key=lambda n: n.lower())
+        return [
+            app_commands.Choice(name=name, value=name)
+            for name in sorted_names
+            if not query or query in name.lower()
+        ][:25]
 
     # 1. /add-match-image
     @tree.command(
@@ -1468,7 +1495,8 @@ def register_commands(
         name="record",
         description="View career statistics and performance rates for a specific player.",
     )
-    @app_commands.describe(player="Player name (case-insensitive)")
+    @app_commands.describe(player="Select player from list")
+    @app_commands.autocomplete(player=player_autocomplete)
     async def record(interaction: discord.Interaction, player: str) -> None:
         err = check_guild_and_channel(interaction, config)
         if err:
@@ -1794,3 +1822,56 @@ def register_commands(
 
         embed = build_fair_teams_embed(split, expected_count)
         await interaction.response.send_message(embed=embed)
+
+    # 11. /form
+    @tree.command(
+        name="form",
+        description="Show a player's recent 5-match form, streaks, and recent match performances.",
+    )
+    @app_commands.describe(player="Select player from list")
+    @app_commands.autocomplete(player=player_autocomplete)
+    async def form(interaction: discord.Interaction, player: str) -> None:
+        err = check_guild_and_channel(interaction, config)
+        if err:
+            await interaction.response.send_message(f"❌ {err}", ephemeral=True)
+            return
+
+        await interaction.response.defer()
+
+        all_matches = await excel_manager.get_all_matches()
+        form_data = calculate_player_form(player, all_matches, window=5)
+
+        if form_data["total_matches"] == 0:
+            await interaction.followup.send(
+                f"📋 No match appearances recorded yet for **{form_data['player']}**.",
+            )
+            return
+
+        badge_map = {"W": "🟢 W", "L": "🔴 L", "D": "⚪ D"}
+        form_display = "  ·  ".join(badge_map[o] for o in form_data["form_list"])
+
+        streak_type = form_data["current_streak_type"]
+        streak_cnt = form_data["current_streak_count"]
+        streak_word = {"W": "Win", "L": "Loss", "D": "Draw"}.get(streak_type, "")
+        streak_str = f"{streak_cnt} {streak_word} Streak" if streak_cnt else "None"
+
+        recent_lines = []
+        for idx, item in enumerate(form_data["recent"], start=1):
+            res_badge = badge_map[item["outcome"]]
+            score_line = format_match_scoreline(item["match"])
+            recent_lines.append(
+                f"{idx}. {res_badge} — {score_line} ({item['goals']}G, {item['assists']}A)"
+            )
+
+        embed = discord.Embed(
+            title=f"📈 Recent Form — {form_data['player']}",
+            description=(
+                f"**Last {len(form_data['recent'])} (Latest first):** {form_display}\n\n"
+                f"**Current Streak:** {streak_str} · **Best Win Streak:** {form_data['longest_win_streak']} · **Unbeaten Streak:** {form_data['longest_unbeaten_streak']}\n\n"
+                + "\n\n".join(recent_lines)
+            ),
+            color=discord.Color.blue(),
+            timestamp=datetime.now(),
+        )
+        embed.set_footer(text=f"Total matches played: {form_data['total_matches']}")
+        await interaction.followup.send(embed=embed)

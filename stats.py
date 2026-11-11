@@ -463,3 +463,73 @@ def generate_fair_teams(
 
     assert best_split is not None
     return best_split
+
+
+def calculate_player_form(
+    player_name: str,
+    matches: List[MatchRecord],
+    window: int = 5,
+) -> dict:
+    """Computes a player's recent form (last N matches) and win/loss streaks."""
+    canonical = canonicalize_player_name(player_name)
+    target_key = canonical.strip().lower()
+
+    appearances: List[dict] = []
+    for match in matches:
+        for stat in match.player_stats:
+            if canonicalize_player_name(stat.player).strip().lower() == target_key:
+                if stat.result in (MatchResult.WIN, MatchResult.HOME_WIN):
+                    outcome = "W"
+                elif stat.result in (MatchResult.LOSS, MatchResult.AWAY_WIN):
+                    outcome = "L"
+                else:
+                    outcome = "D"
+                appearances.append(
+                    {
+                        "match": match,
+                        "outcome": outcome,
+                        "goals": stat.goals,
+                        "assists": stat.assists,
+                    }
+                )
+                break
+
+    longest_win_streak = 0
+    longest_unbeaten_streak = 0
+    running_win = 0
+    running_unbeaten = 0
+    for app in appearances:
+        if app["outcome"] == "W":
+            running_win += 1
+            running_unbeaten += 1
+            longest_win_streak = max(longest_win_streak, running_win)
+            longest_unbeaten_streak = max(longest_unbeaten_streak, running_unbeaten)
+        elif app["outcome"] == "D":
+            running_win = 0
+            running_unbeaten += 1
+            longest_unbeaten_streak = max(longest_unbeaten_streak, running_unbeaten)
+        else:
+            running_win = 0
+            running_unbeaten = 0
+
+    current_streak_type = ""
+    current_streak_count = 0
+    if appearances:
+        current_streak_type = appearances[-1]["outcome"]
+        for app in reversed(appearances):
+            if app["outcome"] == current_streak_type:
+                current_streak_count += 1
+            else:
+                break
+
+    recent = list(reversed(appearances[-max(1, window):]))
+    return {
+        "player": canonical,
+        "total_matches": len(appearances),
+        "recent": recent,
+        "form_list": [a["outcome"] for a in recent],
+        "current_streak_type": current_streak_type,
+        "current_streak_count": current_streak_count,
+        "longest_win_streak": longest_win_streak,
+        "longest_unbeaten_streak": longest_unbeaten_streak,
+    }

@@ -8,6 +8,7 @@ from models import LeaderboardCategory, MatchRecord, MatchResult, PlayerAggregat
 from stats import (
     calculate_best_teams,
     calculate_player_aggregates,
+    calculate_player_form,
     calculate_potm_rankings,
     calculate_potw_rankings,
     generate_fair_teams,
@@ -586,6 +587,40 @@ def test_generate_fair_teams_4_5_6() -> None:
     # Duplicate name should raise ValueError
     with pytest.raises(ValueError, match="Duplicate"):
         generate_fair_teams(["Suri", "Suri", "Skan", "Ashy"], records)
+
+
+def test_calculate_player_form_and_streaks() -> None:
+    """Verifies last-N form ordering, current streak, and longest win streak calculation."""
+    matches = [
+        MatchRecord(
+            match_id=f"M-{i}",
+            date=f"2026-11-10 1{i}:00:00",
+            result=MatchResult.HOME_WIN if res == MatchResult.WIN else MatchResult.AWAY_WIN,
+            submitted_by="Skan",
+            player_stats=[
+                PlayerStat(player="Suri", goals=1, assists=1, result=res),
+                PlayerStat(player="Skan", goals=0, assists=0, result=MatchResult.LOSS if res == MatchResult.WIN else MatchResult.WIN),
+            ],
+        )
+        for i, res in enumerate([
+            MatchResult.WIN,
+            MatchResult.WIN,
+            MatchResult.WIN,
+            MatchResult.LOSS,
+            MatchResult.WIN,
+            MatchResult.WIN,
+        ])
+    ]
+
+    form = calculate_player_form("SuriBG", matches, window=5)
+    assert form["player"] == "Suri"
+    assert form["total_matches"] == 6
+    assert form["form_list"] == ["W", "W", "L", "W", "W"]  # Latest first
+    assert form["current_streak_type"] == "W"
+    assert form["current_streak_count"] == 2
+    assert form["longest_win_streak"] == 3
+    assert form["longest_unbeaten_streak"] == 3
+
 
 
 
