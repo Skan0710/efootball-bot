@@ -48,6 +48,7 @@ def test_command_registration_names(test_config: BotConfig, tmp_path: Path) -> N
         "matches",
         "teammates",
         "potw",
+        "potm",
         "best-team",
     }
     assert registered_names == expected_commands
@@ -468,6 +469,21 @@ async def test_potw_best_team_and_hattrick_leaderboard_commands(test_config: Bot
     assert "Player of the Week" in potw_embed.title
     assert "Suri" in potw_embed.description
     assert "Ashy" in potw_embed.fields[0].value
+    assert "\n\n" in potw_embed.fields[0].value
+    assert "`" not in potw_embed.fields[0].value
+
+    # 1b. Test /potm
+    potm_cmd = bot.tree.get_command("potm")
+    assert potm_cmd is not None
+    inter_potm = _make_interaction()
+    await potm_cmd.callback(inter_potm, 0)
+    inter_potm.followup.send.assert_called_once()
+    potm_embed = inter_potm.followup.send.call_args[1]["embed"]
+    assert "Player of the Month" in potm_embed.title
+    assert "Suri" in potm_embed.description
+    assert "Ashy" in potm_embed.fields[0].value
+    assert "\n\n" in potm_embed.fields[0].value
+    assert "`" not in potm_embed.fields[0].value
 
     # 2. Test /best-team
     best_team_cmd = bot.tree.get_command("best-team")
@@ -478,6 +494,8 @@ async def test_potw_best_team_and_hattrick_leaderboard_commands(test_config: Bot
     team_embed = inter_team.followup.send.call_args[1]["embed"]
     assert "Best Co-op Teams" in team_embed.title
     assert "Ashy & Suri" in team_embed.description
+    assert "\n\n" in team_embed.description
+    assert "`" not in team_embed.description
 
     # 3. Test /leaderboard category:Hattrick
     lb_cmd = bot.tree.get_command("leaderboard")
@@ -489,6 +507,50 @@ async def test_potw_best_team_and_hattrick_leaderboard_commands(test_config: Bot
     lb_embed = inter_lb.followup.send.call_args[1]["embed"]
     assert "Hattrick" in lb_embed.title
     assert "**Suri** — **1** hattrick" in lb_embed.description
+    assert "\n\n" in lb_embed.description
+    assert "`" not in lb_embed.description
+
+
+@pytest.mark.asyncio
+async def test_matches_command_only_shows_team_players_and_score(test_config: BotConfig) -> None:
+    """Verifies /matches displays only team players and score without match ID or extra metadata."""
+    bot = EFootballBot(test_config)
+    await bot.excel_manager.save_match(
+        MatchRecord(
+            match_id="M-SECRET-ID-99",
+            date="2026-11-11 17:00:00",
+            result=MatchResult.HOME_WIN,
+            submitted_by="Ashy",
+            notes="Score: Suri & Ashy 3 - 2 Skan & Jonny (Home Win)",
+            player_stats=[
+                PlayerStat(player="Suri", goals=0, assists=3, result=MatchResult.WIN),
+                PlayerStat(player="Ashy", goals=3, assists=0, result=MatchResult.WIN),
+                PlayerStat(player="Skan", goals=2, assists=0, result=MatchResult.LOSS),
+                PlayerStat(player="Jonny", goals=0, assists=2, result=MatchResult.LOSS),
+            ],
+        )
+    )
+
+    inter = MagicMock(spec=discord.Interaction)
+    inter.guild_id = test_config.guild_id
+    inter.channel_id = test_config.allowed_channel_id
+    inter.response = MagicMock()
+    inter.response.send_message = AsyncMock()
+
+    matches_cmd = bot.tree.get_command("matches")
+    assert matches_cmd is not None
+    await matches_cmd.callback(inter, 10)
+
+    inter.response.send_message.assert_called_once()
+    embed = inter.response.send_message.call_args[1]["embed"]
+    assert len(embed.fields) == 0
+    assert "1. **Suri & Ashy** 3 - 2 **Skan & Jonny**" in embed.description
+    assert "`" not in embed.description
+    assert "M-SECRET-ID-99" not in embed.description
+    assert "Submitted by" not in embed.description
+    assert "3G" not in embed.description
+    assert "2026-11-11" not in embed.description
+
 
 
 

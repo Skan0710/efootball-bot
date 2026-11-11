@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import calendar
 from datetime import datetime, timedelta
 from itertools import combinations
 from typing import Dict, List, Optional, Tuple
@@ -199,18 +200,32 @@ def get_calendar_week_bounds(
     return monday, sunday
 
 
-def calculate_potw_rankings(
-    matches: List[MatchRecord],
+def get_calendar_month_bounds(
     reference_date: Optional[datetime] = None,
-    weeks_ago: int = 0,
-) -> Tuple[List[dict], datetime, datetime]:
-    """Computes Player of the Week rankings using 0.4*Goals + 0.4*Assists + 0.2*Wins."""
-    week_start, week_end = get_calendar_week_bounds(reference_date=reference_date, weeks_ago=weeks_ago)
-    weekly_stats: Dict[str, dict] = {}
+    months_ago: int = 0,
+) -> Tuple[datetime, datetime]:
+    """Returns (1st day 00:00:00, last day 23:59:59.999999) for the calendar month."""
+    ref = reference_date or datetime.now()
+    total_months = ref.year * 12 + (ref.month - 1) - max(0, months_ago)
+    target_year, target_month_zero = divmod(total_months, 12)
+    target_month = target_month_zero + 1
+    last_day = calendar.monthrange(target_year, target_month)[1]
+    month_start = datetime(target_year, target_month, 1, 0, 0, 0)
+    month_end = datetime(target_year, target_month, last_day, 23, 59, 59, 999999)
+    return month_start, month_end
+
+
+def _calculate_weighted_rankings(
+    matches: List[MatchRecord],
+    start_dt: datetime,
+    end_dt: datetime,
+) -> List[dict]:
+    """Computes weighted player rankings within [start_dt, end_dt] using 0.4G + 0.4A + 0.2W."""
+    period_stats: Dict[str, dict] = {}
 
     for match in matches:
         match_dt = parse_match_datetime(match.date)
-        if match_dt is None or not (week_start <= match_dt <= week_end):
+        if match_dt is None or not (start_dt <= match_dt <= end_dt):
             continue
 
         for stat in match.player_stats:
@@ -219,8 +234,8 @@ def calculate_potw_rankings(
             if not key:
                 continue
 
-            if key not in weekly_stats:
-                weekly_stats[key] = {
+            if key not in period_stats:
+                period_stats[key] = {
                     "player": canonical,
                     "matches_played": 0,
                     "goals": 0,
@@ -229,7 +244,7 @@ def calculate_potw_rankings(
                     "losses": 0,
                 }
 
-            entry = weekly_stats[key]
+            entry = period_stats[key]
             entry["matches_played"] += 1
             entry["goals"] += stat.goals
             entry["assists"] += stat.assists
@@ -239,12 +254,11 @@ def calculate_potw_rankings(
                 entry["losses"] += 1
 
     ranked: List[dict] = []
-    for entry in weekly_stats.values():
-        score = round(
+    for entry in period_stats.values():
+        entry["score"] = round(
             0.4 * entry["goals"] + 0.4 * entry["assists"] + 0.2 * entry["wins"],
             2,
         )
-        entry["score"] = score
         ranked.append(entry)
 
     ranked.sort(
@@ -258,7 +272,27 @@ def calculate_potw_rankings(
         ),
         reverse=True,
     )
-    return ranked, week_start, week_end
+    return ranked
+
+
+def calculate_potw_rankings(
+    matches: List[MatchRecord],
+    reference_date: Optional[datetime] = None,
+    weeks_ago: int = 0,
+) -> Tuple[List[dict], datetime, datetime]:
+    """Computes Player of the Week rankings using 0.4*Goals + 0.4*Assists + 0.2*Wins."""
+    week_start, week_end = get_calendar_week_bounds(reference_date=reference_date, weeks_ago=weeks_ago)
+    return _calculate_weighted_rankings(matches, week_start, week_end), week_start, week_end
+
+
+def calculate_potm_rankings(
+    matches: List[MatchRecord],
+    reference_date: Optional[datetime] = None,
+    months_ago: int = 0,
+) -> Tuple[List[dict], datetime, datetime]:
+    """Computes Player of the Month rankings using 0.4*Goals + 0.4*Assists + 0.2*Wins."""
+    month_start, month_end = get_calendar_month_bounds(reference_date=reference_date, months_ago=months_ago)
+    return _calculate_weighted_rankings(matches, month_start, month_end), month_start, month_end
 
 
 def calculate_best_teams(matches: List[MatchRecord]) -> List[dict]:

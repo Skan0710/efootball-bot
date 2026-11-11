@@ -8,6 +8,7 @@ from models import LeaderboardCategory, MatchRecord, MatchResult, PlayerAggregat
 from stats import (
     calculate_best_teams,
     calculate_player_aggregates,
+    calculate_potm_rankings,
     calculate_potw_rankings,
     get_all_teammates,
     get_leaderboard,
@@ -493,6 +494,64 @@ def test_best_team_order_and_case_independence() -> None:
     assert guests["matches_played"] == 2
     assert guests["losses"] == 2
     assert guests["goals"] == 4
+
+
+def test_potm_rankings_calendar_month_and_rollover() -> None:
+    """Verifies calendar month filtering, weighted scoring, and Jan->Dec year rollover."""
+    ref_jan = datetime(2027, 1, 15, 10, 0, 0)
+    matches = [
+        MatchRecord(
+            match_id="M-DEC",
+            date="2026-12-20 18:00:00",
+            result=MatchResult.HOME_WIN,
+            submitted_by="Skan",
+            player_stats=[
+                PlayerStat(player="Skan", goals=4, assists=2, result=MatchResult.WIN),
+            ],
+        ),
+        MatchRecord(
+            match_id="M-JAN-1",
+            date="2027-01-01 00:00:00",
+            result=MatchResult.HOME_WIN,
+            submitted_by="Skan",
+            player_stats=[
+                PlayerStat(player="Ashy", goals=3, assists=1, result=MatchResult.WIN),
+                PlayerStat(player="Suri", goals=1, assists=2, result=MatchResult.LOSS),
+            ],
+        ),
+        MatchRecord(
+            match_id="M-JAN-2",
+            date="2027-01-31 23:59:59",
+            result=MatchResult.HOME_WIN,
+            submitted_by="Skan",
+            player_stats=[
+                PlayerStat(player="Suri", goals=2, assists=3, result=MatchResult.WIN),
+            ],
+        ),
+    ]
+
+    jan_rankings, m_start, m_end = calculate_potm_rankings(
+        matches, reference_date=ref_jan, months_ago=0
+    )
+    assert m_start == datetime(2027, 1, 1, 0, 0, 0)
+    assert m_end.date() == datetime(2027, 1, 31).date()
+
+    # Suri: 3G, 5A, 1W -> 1.2 + 2.0 + 0.2 = 3.4
+    # Ashy: 3G, 1A, 1W -> 1.2 + 0.4 + 0.2 = 1.8
+    assert [r["player"] for r in jan_rankings] == ["Suri", "Ashy"]
+    assert jan_rankings[0]["score"] == 3.4
+    assert jan_rankings[1]["score"] == 1.8
+
+    # months_ago=1 from Jan 2027 rolls back cleanly to Dec 2026
+    dec_rankings, dec_start, dec_end = calculate_potm_rankings(
+        matches, reference_date=ref_jan, months_ago=1
+    )
+    assert dec_start == datetime(2026, 12, 1, 0, 0, 0)
+    assert dec_end.date() == datetime(2026, 12, 31).date()
+    assert len(dec_rankings) == 1
+    assert dec_rankings[0]["player"] == "Skan"
+    assert dec_rankings[0]["score"] == 2.6
+
 
 
 

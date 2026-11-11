@@ -30,6 +30,7 @@ from ocr import extract_player_stats_from_screenshot, validate_image_file
 from stats import (
     calculate_best_teams,
     calculate_player_aggregates,
+    calculate_potm_rankings,
     calculate_potw_rankings,
     get_all_teammates,
     get_leaderboard,
@@ -121,6 +122,63 @@ def parse_players_from_team_param(team_param: Optional[str]) -> List[str]:
         return []
     parts = re.split(r"\s+(?:and|&|\+)\s*|,\s*", s, flags=re.IGNORECASE)
     return [canonicalize_player_name(p.strip()) for p in parts if p.strip()]
+
+
+def format_match_scoreline(match: MatchRecord) -> str:
+    """Formats a match record showing only team players and score (no match ID or metadata)."""
+    win_stats = [p for p in match.player_stats if p.result in (MatchResult.WIN, MatchResult.HOME_WIN)]
+    loss_stats = [p for p in match.player_stats if p.result in (MatchResult.LOSS, MatchResult.AWAY_WIN)]
+    draw_stats = [p for p in match.player_stats if p.result == MatchResult.DRAW]
+
+    win_players = [canonicalize_player_name(p.player) for p in win_stats]
+    loss_players = [canonicalize_player_name(p.player) for p in loss_stats]
+    win_goals = sum(p.goals for p in win_stats)
+    loss_goals = sum(p.goals for p in loss_stats)
+
+    note_left: Optional[str] = None
+    note_right: Optional[str] = None
+    h_score: Optional[int] = None
+    a_score: Optional[int] = None
+
+    if match.notes:
+        score_match = re.match(
+            r"^\s*(?:Score:\s*)?(?P<left>.+?)\s+(?P<hs>\d+)\s*-\s*(?P<as>\d+)\s+(?P<right>.+?)(?:\s*\([^)]*\))?\s*$",
+            match.notes.strip(),
+            flags=re.IGNORECASE,
+        )
+        if score_match:
+            note_left = score_match.group("left").strip()
+            note_right = score_match.group("right").strip()
+            h_score = int(score_match.group("hs"))
+            a_score = int(score_match.group("as"))
+
+    if match.result in (MatchResult.AWAY_WIN, MatchResult.LOSS):
+        home_players = loss_players
+        away_players = win_players
+        if h_score is None or a_score is None:
+            h_score, a_score = loss_goals, win_goals
+    else:
+        home_players = win_players
+        away_players = loss_players
+        if h_score is None or a_score is None:
+            if draw_stats and not win_stats and not loss_stats:
+                h_score, a_score = 0, 0
+            else:
+                h_score, a_score = win_goals, loss_goals
+
+    parsed_left = parse_players_from_team_param(note_left)
+    parsed_right = parse_players_from_team_param(note_right)
+
+    home_str = " & ".join(home_players or parsed_left) or (note_left or "Home")
+    away_str = " & ".join(away_players or parsed_right) or (note_right or "Away")
+
+    if draw_stats and not home_players and not away_players and not parsed_left and not parsed_right:
+        all_draw = [canonicalize_player_name(p.player) for p in draw_stats]
+        mid = max(1, len(all_draw) // 2)
+        home_str = " & ".join(all_draw[:mid]) or "Home"
+        away_str = " & ".join(all_draw[mid:]) or "Away"
+
+    return f"**{home_str}** {h_score} - {a_score} **{away_str}**"
 
 
 def build_preview_embed(
@@ -1291,7 +1349,7 @@ def register_commands(
         medals = ["🥇", "🥈", "🥉"]
         lines = []
         for rank, r in enumerate(records[:20], start=1):
-            badge = medals[rank - 1] if rank <= 3 else f"`#{rank}`"
+            badge = medals[rank - 1] if rank <= 3 else f"**#{rank}**"
 
             if cat_enum == LeaderboardCategory.GOALS:
                 stat_str = f"**{r['goals']}** goals"
@@ -1323,7 +1381,7 @@ def register_commands(
 
             lines.append(f"{badge} **{r['player']}** — {stat_str}")
 
-        embed.description = "\n".join(lines)
+        embed.description = "\n\n".join(lines)
         embed.set_footer(text=f"Total registered teammates: {len(records)} • Sorted by {cat_enum.value}")
         await interaction.followup.send(embed=embed)
 
@@ -1412,22 +1470,11 @@ def register_commands(
             timestamp=datetime.now(),
         )
 
-        for m in recent:
-            res_emoji = (
-                "🟢"
-                if m.result in (MatchResult.HOME_WIN, MatchResult.WIN)
-                else ("🔴" if m.result in (MatchResult.AWAY_WIN, MatchResult.LOSS) else "⚪")
-            )
-            player_summary = ", ".join(
-                f"{p.player} ({p.goals}G, {p.assists}A)" for p in m.player_stats
-            ) or "No player stats"
-
-            embed.add_field(
-                name=f"{res_emoji} {m.match_id} — {m.result.value} ({m.date})",
-                value=f"**Players:** {player_summary}\n*Submitted by: {m.submitted_by}*",
-                inline=False,
-            )
-
+        lines = [
+            f"{idx}. {format_match_scoreline(m)}"
+            for idx, m in enumerate(recent, start=1)
+        ]
+        embed.description = "\n\n".join(lines)
         embed.set_footer(text=f"Showing {len(recent)} of {len(all_matches)} total matches.")
         await interaction.response.send_message(embed=embed)
 
@@ -1464,9 +1511,40 @@ def register_commands(
                 f"• **{t['player']}**: {t['matches_played']} matches | {t['goals']} goals | {t['assists']} assists | G/A: {t['ga']} | {t['wins']}W / {t['losses']}L ({t['win_rate']:.1f}% WR)"
             )
 
-        embed.description = "\n".join(lines)
+        embed.description = "\n\n".join(lines)
         embed.set_footer(text="Alphabetical order by name • Fetched from Excel")
         await interaction.response.send_message(embed=embed)
+
+    def _build_weighted_award_embed(
+        title: str,
+        field_name: str,
+        footer_text: str,
+        rankings: List[dict],
+        color: discord.Color,
+    ) -> discord.Embed:
+        winner = rankings[0]
+        embed = discord.Embed(
+            title=title,
+            description=(
+                f"👑 **{winner['player']}** leads with **{winner['score']:.2f}** pts "
+                f"({winner['goals']}G, {winner['assists']}A, {winner['wins']}W in {winner['matches_played']} MP)\n"
+            ),
+            color=color,
+            timestamp=datetime.now(),
+        )
+
+        medals = ["🥇", "🥈", "🥉"]
+        lines = []
+        for rank, r in enumerate(rankings[:20], start=1):
+            badge = medals[rank - 1] if rank <= 3 else f"**#{rank}**"
+            lines.append(
+                f"{badge} **{r['player']}** — **{r['score']:.2f}** pts "
+                f"({r['goals']}G · {r['assists']}A · {r['wins']}W · {r['matches_played']} MP)"
+            )
+
+        embed.add_field(name=field_name, value="\n\n".join(lines), inline=False)
+        embed.set_footer(text=footer_text)
+        return embed
 
     # 7. /potw
     @tree.command(
@@ -1495,29 +1573,48 @@ def register_commands(
             )
             return
 
-        winner = rankings[0]
-        embed = discord.Embed(
+        embed = _build_weighted_award_embed(
             title=f"🏆 Player of the Week — {week_range}",
-            description=(
-                f"👑 **{winner['player']}** leads with **{winner['score']:.2f}** pts "
-                f"(`{winner['goals']}G`, `{winner['assists']}A`, `{winner['wins']}W` in `{winner['matches_played']}` MP)\n"
-            ),
+            field_name="Weekly Standings",
+            footer_text="Score = 0.4×Goals + 0.4×Assists + 0.2×Wins • Mon–Sun Calendar Week",
+            rankings=rankings,
             color=discord.Color.gold(),
-            timestamp=datetime.now(),
         )
+        await interaction.followup.send(embed=embed)
 
-        medals = ["🥇", "🥈", "🥉"]
-        lines = []
-        for rank, r in enumerate(rankings, start=1):
-            badge = medals[rank - 1] if rank <= 3 else f"`#{rank}`"
-            lines.append(
-                f"{badge} **{r['player']}** — **{r['score']:.2f}** pts "
-                f"({r['goals']}G · {r['assists']}A · {r['wins']}W · {r['matches_played']} MP)"
+    # 8. /potm
+    @tree.command(
+        name="potm",
+        description="Show Player of the Month ranked by 0.4*Goals + 0.4*Assists + 0.2*Wins.",
+    )
+    @app_commands.describe(months_ago="0 for current month (default), 1 for last month, etc.")
+    async def potm(interaction: discord.Interaction, months_ago: Optional[int] = 0) -> None:
+        err = check_guild_and_channel(interaction, config)
+        if err:
+            await interaction.response.send_message(f"❌ {err}", ephemeral=True)
+            return
+
+        await interaction.response.defer()
+
+        bounded_months = max(0, months_ago or 0)
+        all_matches = await excel_manager.get_all_matches()
+        rankings, month_start, _ = calculate_potm_rankings(
+            all_matches, months_ago=bounded_months
+        )
+        month_label = month_start.strftime("%B %Y")
+
+        if not rankings:
+            await interaction.followup.send(
+                f"📋 No matches recorded for **{month_label}**.",
             )
+            return
 
-        embed.add_field(name="Weekly Standings", value="\n".join(lines), inline=False)
-        embed.set_footer(
-            text="Score = 0.4×Goals + 0.4×Assists + 0.2×Wins • Mon–Sun Calendar Week"
+        embed = _build_weighted_award_embed(
+            title=f"🏅 Player of the Month — {month_label}",
+            field_name="Monthly Standings",
+            footer_text="Score = 0.4×Goals + 0.4×Assists + 0.2×Wins • Calendar Month",
+            rankings=rankings,
+            color=discord.Color.orange(),
         )
         await interaction.followup.send(embed=embed)
 
@@ -1545,27 +1642,26 @@ def register_commands(
             return
 
         top = winning_teams[0]
-        embed = discord.Embed(
-            title="🤝 Best Co-op Teams — Most Wins Together",
-            description=(
-                f"🏆 **{top['team_name']}** lead with **{top['wins']}** "
-                f"{'win' if top['wins'] == 1 else 'wins'} together "
-                f"(`{top['wins']}W / {top['losses']}L` · `{top['win_rate']:.1f}% WR`)\n"
-            ),
-            color=discord.Color.green(),
-            timestamp=datetime.now(),
-        )
-
         medals = ["🥇", "🥈", "🥉"]
         lines = []
         for rank, t in enumerate(teams[:20], start=1):
-            badge = medals[rank - 1] if rank <= 3 else f"`#{rank}`"
+            badge = medals[rank - 1] if rank <= 3 else f"**#{rank}**"
             win_word = "win" if t["wins"] == 1 else "wins"
             lines.append(
                 f"{badge} **{t['team_name']}** — **{t['wins']}** {win_word} "
                 f"({t['wins']}W / {t['losses']}L · {t['win_rate']:.1f}% WR · {t['goals']}G)"
             )
 
-        embed.add_field(name="Teammate Duo Rankings", value="\n".join(lines), inline=False)
+        embed = discord.Embed(
+            title="🤝 Best Co-op Teams — Most Wins Together",
+            description=(
+                f"🏆 **{top['team_name']}** lead with **{top['wins']}** "
+                f"{'win' if top['wins'] == 1 else 'wins'} together "
+                f"({top['wins']}W / {top['losses']}L · {top['win_rate']:.1f}% WR)\n\n"
+                + "\n\n".join(lines)
+            ),
+            color=discord.Color.green(),
+            timestamp=datetime.now(),
+        )
         embed.set_footer(text=f"Total teammate pairings: {len(teams)} • Sorted by wins together")
         await interaction.followup.send(embed=embed)
