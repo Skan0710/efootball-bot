@@ -30,10 +30,12 @@ from models import (
 from ocr import extract_player_stats_from_screenshot, validate_image_file
 from stats import (
     calculate_best_teams,
+    calculate_head_to_head,
     calculate_player_aggregates,
     calculate_player_form,
     calculate_potm_rankings,
     calculate_potw_rankings,
+    compute_player_rating,
     generate_fair_teams,
     get_all_teammates,
     get_leaderboard,
@@ -1875,3 +1877,139 @@ def register_commands(
         )
         embed.set_footer(text=f"Total matches played: {form_data['total_matches']}")
         await interaction.followup.send(embed=embed)
+
+    # 12. /h2h
+    @tree.command(
+        name="h2h",
+        description="View head-to-head rivalry and duo chemistry stats between two players.",
+    )
+    @app_commands.describe(
+        player1="Select first player",
+        player2="Select second player",
+    )
+    @app_commands.autocomplete(player1=player_autocomplete, player2=player_autocomplete)
+    async def h2h(interaction: discord.Interaction, player1: str, player2: str) -> None:
+        err = check_guild_and_channel(interaction, config)
+        if err:
+            await interaction.response.send_message(f"❌ {err}", ephemeral=True)
+            return
+
+        all_matches = await excel_manager.get_all_matches()
+        try:
+            h2h_data = calculate_head_to_head(player1, player2, all_matches)
+        except ValueError as exc:
+            await interaction.response.send_message(f"❌ {exc}", ephemeral=True)
+            return
+
+        p1 = h2h_data["player1"]
+        p2 = h2h_data["player2"]
+        tog = h2h_data["together"]
+        aga = h2h_data["against"]
+
+        if tog["matches"] == 0 and aga["matches"] == 0:
+            await interaction.response.send_message(
+                f"📋 **{p1}** and **{p2}** have not shared any recorded matches yet.",
+            )
+            return
+
+        embed = discord.Embed(
+            title=f"⚔️ Head-to-Head & Chemistry — {p1} vs {p2}",
+            color=discord.Color.magenta(),
+            timestamp=datetime.now(),
+        )
+
+        if tog["matches"] > 0:
+            tog_val = (
+                f"**Matches Together:** {tog['matches']}\n\n"
+                f"**Record:** {tog['wins']}W / {tog['losses']}L ({tog['win_rate']:.1f}% WR)\n\n"
+                f"**{p1}:** {tog['p1_goals']}G, {tog['p1_assists']}A · "
+                f"**{p2}:** {tog['p2_goals']}G, {tog['p2_assists']}A"
+            )
+        else:
+            tog_val = "No matches played on the same team yet."
+
+        if aga["matches"] > 0:
+            aga_val = (
+                f"**Matches Against:** {aga['matches']}\n\n"
+                f"**Wins:** {p1} {aga['p1_wins']} — {aga['p2_wins']} {p2}\n\n"
+                f"**{p1}:** {aga['p1_goals']}G, {aga['p1_assists']}A ({aga['p1_win_rate']:.1f}% WR)\n\n"
+                f"**{p2}:** {aga['p2_goals']}G, {aga['p2_assists']}A ({aga['p2_win_rate']:.1f}% WR)"
+            )
+        else:
+            aga_val = "No matches played on opposing teams yet."
+
+        embed.add_field(name="🤝 Playing Together", value=tog_val, inline=False)
+        embed.add_field(name="🥊 Playing Against Each Other", value=aga_val, inline=False)
+        embed.set_footer(text=f"Total shared matches: {tog['matches'] + aga['matches']}")
+        await interaction.response.send_message(embed=embed)
+
+    # 13. /compare
+    @tree.command(
+        name="compare",
+        description="Side-by-side career statistics comparison of two players.",
+    )
+    @app_commands.describe(
+        player1="Select first player",
+        player2="Select second player",
+    )
+    @app_commands.autocomplete(player1=player_autocomplete, player2=player_autocomplete)
+    async def compare(interaction: discord.Interaction, player1: str, player2: str) -> None:
+        err = check_guild_and_channel(interaction, config)
+        if err:
+            await interaction.response.send_message(f"❌ {err}", ephemeral=True)
+            return
+
+        records = await excel_manager.get_leaderboard_from_sheet()
+        c1 = canonicalize_player_name(player1)
+        c2 = canonicalize_player_name(player2)
+        if c1.lower() == c2.lower():
+            await interaction.response.send_message(
+                f"❌ Please select two different players to compare (both resolved to **{c1}**).",
+                ephemeral=True,
+            )
+            return
+
+        r1 = next((r for r in records if r["player"].lower() == c1.lower()), None)
+        r2 = next((r for r in records if r["player"].lower() == c2.lower()), None)
+        if not r1 or not r2:
+            missing = c1 if not r1 else c2
+            await interaction.response.send_message(
+                f"❌ Player **{missing}** was not found in Excel leaderboard. Use `/teammates` to see registered players.",
+                ephemeral=True,
+            )
+            return
+
+        rating1 = compute_player_rating(r1)
+        rating2 = compute_player_rating(r2)
+
+        def _cmp_line(label: str, v1: float | int, v2: float | int, fmt: str = "d") -> str:
+            s1 = f"{v1:{fmt}}"
+            s2 = f"{v2:{fmt}}"
+            if v1 > v2:
+                return f"**{label}:** ◀️ **{s1}**  vs  {s2}"
+            if v2 > v1:
+                return f"**{label}:** {s1}  vs  **{s2}** ▶️"
+            return f"**{label}:** {s1}  vs  {s2}"
+
+        rows = [
+            _cmp_line("Matches Played", r1["matches_played"], r2["matches_played"]),
+            _cmp_line("Goals", r1["goals"], r2["goals"]),
+            _cmp_line("Assists", r1["assists"], r2["assists"]),
+            _cmp_line("G/A", r1["ga"], r2["ga"]),
+            _cmp_line("Wins", r1["wins"], r2["wins"]),
+            _cmp_line("Win Rate%", r1["win_rate"], r2["win_rate"], ".1f"),
+            _cmp_line("GPG", r1["gpg"], r2["gpg"], ".2f"),
+            _cmp_line("APG", r1["apg"], r2["apg"], ".2f"),
+            _cmp_line("GAPG", r1["gapg"], r2["gapg"], ".2f"),
+            _cmp_line("Hattricks", r1.get("hattricks", 0), r2.get("hattricks", 0)),
+            _cmp_line("Skill Rating", rating1, rating2, ".1f"),
+        ]
+
+        embed = discord.Embed(
+            title=f"⚖️ Player Comparison — {r1['player']} vs {r2['player']}",
+            description="\n\n".join(rows),
+            color=discord.Color.teal(),
+            timestamp=datetime.now(),
+        )
+        embed.set_footer(text="◀️ / ▶️ highlights the leader in each stat • Fetched from Excel")
+        await interaction.response.send_message(embed=embed)

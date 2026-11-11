@@ -533,3 +533,73 @@ def calculate_player_form(
         "longest_win_streak": longest_win_streak,
         "longest_unbeaten_streak": longest_unbeaten_streak,
     }
+
+
+def calculate_head_to_head(
+    player1: str,
+    player2: str,
+    matches: List[MatchRecord],
+) -> dict:
+    """Computes playing-together chemistry and playing-against rivalry stats for two players."""
+    p1 = canonicalize_player_name(player1)
+    p2 = canonicalize_player_name(player2)
+    k1 = p1.strip().lower()
+    k2 = p2.strip().lower()
+    if not k1 or not k2:
+        raise ValueError("Both player names must be non-empty.")
+    if k1 == k2:
+        raise ValueError(f"Please choose two different players (both resolved to '{p1}').")
+
+    together = {"matches": 0, "wins": 0, "losses": 0, "p1_goals": 0, "p1_assists": 0, "p2_goals": 0, "p2_assists": 0}
+    against = {"matches": 0, "p1_wins": 0, "p2_wins": 0, "p1_goals": 0, "p1_assists": 0, "p2_goals": 0, "p2_assists": 0}
+
+    for match in matches:
+        stats_by_key: Dict[str, PlayerStat] = {}
+        for stat in match.player_stats:
+            ck = canonicalize_player_name(stat.player).strip().lower()
+            if ck:
+                stats_by_key[ck] = stat
+
+        if k1 not in stats_by_key or k2 not in stats_by_key:
+            continue
+
+        s1 = stats_by_key[k1]
+        s2 = stats_by_key[k2]
+        s1_win = s1.result in (MatchResult.WIN, MatchResult.HOME_WIN)
+        s1_loss = s1.result in (MatchResult.LOSS, MatchResult.AWAY_WIN)
+        s2_win = s2.result in (MatchResult.WIN, MatchResult.HOME_WIN)
+        s2_loss = s2.result in (MatchResult.LOSS, MatchResult.AWAY_WIN)
+
+        if (s1_win and s2_win) or (s1_loss and s2_loss):
+            together["matches"] += 1
+            if s1_win:
+                together["wins"] += 1
+            else:
+                together["losses"] += 1
+            together["p1_goals"] += s1.goals
+            together["p1_assists"] += s1.assists
+            together["p2_goals"] += s2.goals
+            together["p2_assists"] += s2.assists
+        elif (s1_win and s2_loss) or (s1_loss and s2_win):
+            against["matches"] += 1
+            if s1_win:
+                against["p1_wins"] += 1
+            else:
+                against["p2_wins"] += 1
+            against["p1_goals"] += s1.goals
+            against["p1_assists"] += s1.assists
+            against["p2_goals"] += s2.goals
+            against["p2_assists"] += s2.assists
+
+    t_mp = together["matches"]
+    together["win_rate"] = round((together["wins"] / t_mp) * 100.0, 1) if t_mp > 0 else 0.0
+    a_mp = against["matches"]
+    against["p1_win_rate"] = round((against["p1_wins"] / a_mp) * 100.0, 1) if a_mp > 0 else 0.0
+    against["p2_win_rate"] = round((against["p2_wins"] / a_mp) * 100.0, 1) if a_mp > 0 else 0.0
+
+    return {
+        "player1": p1,
+        "player2": p2,
+        "together": together,
+        "against": against,
+    }

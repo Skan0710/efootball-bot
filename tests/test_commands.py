@@ -52,6 +52,8 @@ def test_command_registration_names(test_config: BotConfig, tmp_path: Path) -> N
         "best-team",
         "fair-teams",
         "form",
+        "h2h",
+        "compare",
     }
     assert registered_names == expected_commands
 
@@ -661,6 +663,56 @@ async def test_form_and_record_player_autocomplete(test_config: BotConfig) -> No
     assert "Recent Form — Suri" in embed.title
     assert "1 Win Streak" in embed.description
     assert "2G, 1A" in embed.description
+
+
+@pytest.mark.asyncio
+async def test_h2h_and_compare_commands(test_config: BotConfig) -> None:
+    """Verifies /h2h and /compare embeds and listed player autocomplete."""
+    bot = EFootballBot(test_config)
+    await bot.excel_manager.save_match(
+        MatchRecord(
+            match_id="M-CMP-1",
+            date="2026-11-11 14:00:00",
+            result=MatchResult.HOME_WIN,
+            submitted_by="Skan",
+            player_stats=[
+                PlayerStat(player="Suri", goals=3, assists=1, result=MatchResult.WIN),
+                PlayerStat(player="Ashy", goals=1, assists=2, result=MatchResult.WIN),
+                PlayerStat(player="Skan", goals=1, assists=0, result=MatchResult.LOSS),
+                PlayerStat(player="Annie", goals=0, assists=1, result=MatchResult.LOSS),
+            ],
+        )
+    )
+
+    h2h_cmd = bot.tree.get_command("h2h")
+    compare_cmd = bot.tree.get_command("compare")
+    assert h2h_cmd is not None and compare_cmd is not None
+
+    inter_h2h = MagicMock(spec=discord.Interaction)
+    inter_h2h.guild_id = test_config.guild_id
+    inter_h2h.channel_id = test_config.allowed_channel_id
+    inter_h2h.response = MagicMock()
+    inter_h2h.response.send_message = AsyncMock()
+
+    await h2h_cmd.callback(inter_h2h, "Suri", "Skan")
+    inter_h2h.response.send_message.assert_called_once()
+    h2h_embed = inter_h2h.response.send_message.call_args[1]["embed"]
+    assert "Suri vs Skan" in h2h_embed.title
+    assert "Matches Against:" in h2h_embed.fields[1].value
+
+    inter_cmp = MagicMock(spec=discord.Interaction)
+    inter_cmp.guild_id = test_config.guild_id
+    inter_cmp.channel_id = test_config.allowed_channel_id
+    inter_cmp.response = MagicMock()
+    inter_cmp.response.send_message = AsyncMock()
+
+    await compare_cmd.callback(inter_cmp, "Suri", "Skan")
+    inter_cmp.response.send_message.assert_called_once()
+    cmp_embed = inter_cmp.response.send_message.call_args[1]["embed"]
+    assert "Player Comparison — Suri vs Skan" in cmp_embed.title
+    assert "Skill Rating" in cmp_embed.description
+    assert "\n\n" in cmp_embed.description
+
 
 
 

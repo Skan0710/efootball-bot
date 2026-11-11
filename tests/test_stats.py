@@ -7,6 +7,7 @@ import pytest
 from models import LeaderboardCategory, MatchRecord, MatchResult, PlayerAggregateRecord, PlayerStat
 from stats import (
     calculate_best_teams,
+    calculate_head_to_head,
     calculate_player_aggregates,
     calculate_player_form,
     calculate_potm_rankings,
@@ -620,6 +621,54 @@ def test_calculate_player_form_and_streaks() -> None:
     assert form["current_streak_count"] == 2
     assert form["longest_win_streak"] == 3
     assert form["longest_unbeaten_streak"] == 3
+
+
+def test_calculate_head_to_head() -> None:
+    """Verifies duo chemistry (together) vs rivalry (against) stats across matches."""
+    matches = [
+        MatchRecord(
+            match_id="M-H2H-1",
+            date="2026-11-11 10:00:00",
+            result=MatchResult.HOME_WIN,
+            submitted_by="Skan",
+            player_stats=[
+                PlayerStat(player="Suri", goals=2, assists=1, result=MatchResult.WIN),
+                PlayerStat(player="Skan", goals=1, assists=2, result=MatchResult.WIN),
+            ],
+        ),
+        MatchRecord(
+            match_id="M-H2H-2",
+            date="2026-11-11 11:00:00",
+            result=MatchResult.HOME_WIN,
+            submitted_by="Skan",
+            player_stats=[
+                PlayerStat(player="Suri", goals=3, assists=0, result=MatchResult.WIN),
+                PlayerStat(player="Skan", goals=1, assists=0, result=MatchResult.LOSS),
+            ],
+        ),
+        MatchRecord(
+            match_id="M-H2H-3",
+            date="2026-11-11 12:00:00",
+            result=MatchResult.HOME_WIN,
+            submitted_by="Skan",
+            player_stats=[
+                PlayerStat(player="Skan", goals=2, assists=1, result=MatchResult.WIN),
+                PlayerStat(player="Suri", goals=0, assists=1, result=MatchResult.LOSS),
+            ],
+        ),
+    ]
+
+    h2h = calculate_head_to_head("Suri", "SkanRocky", matches)
+    assert h2h["player1"] == "Suri"
+    assert h2h["player2"] == "Skan"
+    assert h2h["together"]["matches"] == 1
+    assert h2h["together"]["wins"] == 1
+    assert h2h["together"]["win_rate"] == 100.0
+    assert h2h["against"]["matches"] == 2
+    assert h2h["against"]["p1_wins"] == 1
+    assert h2h["against"]["p2_wins"] == 1
+    assert h2h["against"]["p1_win_rate"] == 50.0
+
 
 
 
