@@ -1089,3 +1089,206 @@ def calculate_player_chemistry(player_name: str, matches: List[MatchRecord]) -> 
         "partners": sorted(partner_list, key=lambda p: (p["matches"], p["win_rate"]), reverse=True),
         "opponents": sorted(opponent_list, key=lambda o: (o["matches"], o["my_win_rate"]), reverse=True),
     }
+
+
+def calculate_session_recap(
+    matches: List[MatchRecord],
+    target_date: Optional[str] = None,
+) -> dict:
+    """Calculates summary statistics and top performers for a specific day or latest session."""
+    if not matches:
+        return {"total_matches": 0, "date": target_date or "", "matches": []}
+
+    if target_date:
+        clean_target = target_date.strip()
+        session_matches = [
+            m for m in matches
+            if m.date and m.date.strip().startswith(clean_target)
+        ]
+        chosen_date = clean_target
+    else:
+        # Auto-pick the date of the most recent match
+        latest_match = matches[-1]
+        dt = parse_match_datetime(latest_match.date)
+        chosen_date = dt.strftime("%Y-%m-%d") if dt else (latest_match.date[:10] if len(latest_match.date) >= 10 else "Latest")
+        session_matches = [
+            m for m in matches
+            if m.date and m.date.strip().startswith(chosen_date)
+        ]
+
+    if not session_matches:
+        return {"total_matches": 0, "date": chosen_date, "matches": []}
+
+    total_goals = 0
+    clean_sheets_count = 0
+    player_stats_map: Dict[str, dict] = {}
+    biggest_win_margin = -1
+    biggest_win_match: Optional[MatchRecord] = None
+
+    for m in session_matches:
+        hs, a_s = extract_match_scores(m)
+        margin = abs(hs - a_s)
+        if margin > biggest_win_margin:
+            biggest_win_margin = margin
+            biggest_win_match = m
+
+        if (hs > 0 and a_s == 0) or (a_s > 0 and hs == 0):
+            clean_sheets_count += 1
+
+        for stat in m.player_stats:
+            c_name = canonicalize_player_name(stat.player)
+            k = c_name.strip().lower()
+            if not k:
+                continue
+            p_entry = player_stats_map.setdefault(
+                k,
+                {"player": c_name, "goals": 0, "assists": 0, "wins": 0, "losses": 0, "matches": 0},
+            )
+            p_entry["goals"] += stat.goals
+            p_entry["assists"] += stat.assists
+            p_entry["matches"] += 1
+            total_goals += stat.goals
+            if stat.result in (MatchResult.WIN, MatchResult.HOME_WIN):
+                p_entry["wins"] += 1
+            elif stat.result in (MatchResult.LOSS, MatchResult.AWAY_WIN):
+                p_entry["losses"] += 1
+
+    player_list = list(player_stats_map.values())
+    for p in player_list:
+        p["ga"] = p["goals"] + p["assists"]
+        p["score"] = round(0.4 * p["goals"] + 0.4 * p["assists"] + 0.2 * p["wins"], 2)
+
+    player_list.sort(key=lambda p: (p["score"], p["ga"], p["goals"], p["wins"]), reverse=True)
+    mvp = player_list[0] if player_list else None
+    top_scorer = max(player_list, key=lambda p: (p["goals"], p["assists"]), default=None)
+    top_playmaker = max(player_list, key=lambda p: (p["assists"], p["goals"]), default=None)
+
+    return {
+        "date": chosen_date,
+        "total_matches": len(session_matches),
+        "total_goals": total_goals,
+        "clean_sheets": clean_sheets_count,
+        "biggest_win_match": biggest_win_match,
+        "biggest_win_margin": biggest_win_margin,
+        "mvp": mvp,
+        "top_scorer": top_scorer,
+        "top_playmaker": top_playmaker,
+        "players": player_list,
+        "matches": session_matches,
+    }
+
+
+def calculate_player_trophies(
+    player_name: str,
+    matches: List[MatchRecord],
+    all_aggregates: Dict[str, PlayerAggregateRecord],
+) -> dict:
+    """Computes unlockable badges and milestones for a player from career and match history."""
+    canonical = canonicalize_player_name(player_name)
+    k = canonical.strip().lower()
+    rec = all_aggregates.get(k) or PlayerAggregateRecord.compute(canonical, 0, 0, 0, 0, 0, 0)
+
+    # Calculate single match highs and streaks
+    single_max_goals = 0
+    single_max_assists = 0
+    single_max_ga = 0
+    clutch_wins = 0
+    clean_sheet_wins = 0
+    duo_partners: Dict[str, dict] = {}
+
+    f_data = calculate_player_form(canonical, matches, window=5)
+    best_streak = f_data["longest_win_streak"]
+
+    for m in matches:
+        player_stat: Optional[PlayerStat] = None
+        teammates: List[str] = []
+        for s in m.player_stats:
+            c_s = canonicalize_player_name(s.player)
+            if c_s.strip().lower() == k:
+                player_stat = s
+            else:
+                teammates.append(c_s)
+
+        if not player_stat:
+            continue
+
+        single_max_goals = max(single_max_goals, player_stat.goals)
+        single_max_assists = max(single_max_assists, player_stat.assists)
+        single_max_ga = max(single_max_ga, player_stat.goals + player_stat.assists)
+
+        is_win = player_stat.result in (MatchResult.WIN, MatchResult.HOME_WIN)
+        hs, a_s = extract_match_scores(m)
+        margin = abs(hs - a_s)
+        if is_win and margin == 1 and (player_stat.goals > 0 or player_stat.assists > 0):
+            clutch_wins += 1
+
+        conceded = get_match_player_conceded_goals(m, player_stat)
+        if is_win and conceded == 0:
+            clean_sheet_wins += 1
+
+        for tm in teammates:
+            entry = duo_partners.setdefault(tm, {"wins": 0, "matches": 0})
+            entry["matches"] += 1
+            if is_win:
+                entry["wins"] += 1
+
+    duo_master = any(d["wins"] >= 5 and (d["wins"] / d["matches"]) >= 0.75 for d in duo_partners.values() if d["matches"] >= 5)
+
+    badge_definitions = [
+        ("🎩", "Hattrick Hero", "Score 3+ goals in a single match", rec.hattricks >= 1 or single_max_goals >= 3),
+        ("⚡", "Super Hattrick", "Score 4+ goals in a single match", single_max_goals >= 4),
+        ("🎯", "Master Playmaker", "Provide 3+ assists in a single match", single_max_assists >= 3),
+        ("🌟", "One-Man Army", "Achieve 4+ G/A in a single match", single_max_ga >= 4),
+        ("🧤", "The Iron Wall", "Keep at least 2 clean sheet victories", clean_sheet_wins >= 2),
+        ("🔥", "Unstoppable", "Achieve a 4+ match win streak", best_streak >= 4),
+        ("👑", "Century Contender", "Reach 25+ career G/A", rec.ga >= 25),
+        ("🎯", "Centurion Club", "Reach 50+ career G/A", rec.ga >= 50),
+        ("⏱️", "Clutch Gene", "Deliver in 3+ close wins (1-goal margin)", clutch_wins >= 3),
+        ("🤝", "Dynamic Duo", "Win 5+ matches with 75%+ win rate with a partner", duo_master),
+        ("📅", "Veteran", "Play 10+ career matches", rec.matches_played >= 10),
+    ]
+
+    unlocked = [b for b in badge_definitions if b[3]]
+    locked = [b for b in badge_definitions if not b[3]]
+
+    return {
+        "player": canonical,
+        "total_unlocked": len(unlocked),
+        "total_badges": len(badge_definitions),
+        "unlocked": unlocked,
+        "locked": locked,
+    }
+
+
+def calculate_player_tierlist(
+    leaderboard_records: List[dict],
+    matches: List[MatchRecord],
+) -> Dict[str, List[dict]]:
+    """Sorts players into S, A, B, and C tiers based on calibrated card ratings and form."""
+    tiers: Dict[str, List[dict]] = {"S": [], "A": [], "B": [], "C": []}
+    for r in leaderboard_records:
+        card = calculate_player_card_stats(r["player"], leaderboard_records, matches)
+        if not card:
+            continue
+        ovr = card["rating"]
+        if ovr >= 88:
+            t = "S"
+        elif ovr >= 78:
+            t = "A"
+        elif ovr >= 70:
+            t = "B"
+        else:
+            t = "C"
+        tiers[t].append({
+            "player": card["player"],
+            "ovr": ovr,
+            "position": card["position"],
+            "matches_played": card["matches_played"],
+            "ga": card["goals"] + card["assists"],
+            "win_rate": card["win_rate"],
+        })
+
+    for t_list in tiers.values():
+        t_list.sort(key=lambda x: (x["ovr"], x["win_rate"], x["ga"]), reverse=True)
+
+    return tiers
