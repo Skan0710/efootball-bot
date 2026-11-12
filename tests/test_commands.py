@@ -56,6 +56,7 @@ def test_command_registration_names(test_config: BotConfig, tmp_path: Path) -> N
         "compare",
         "hall-of-fame",
         "card",
+        "chemistry",
     }
     assert registered_names == expected_commands
 
@@ -848,6 +849,57 @@ async def test_card_command(test_config: BotConfig) -> None:
     assert "FC 27 Player Card — Suri" in kwargs["embed"].title
     assert isinstance(kwargs["file"], discord.File)
     assert kwargs["file"].filename.endswith("_fc27_card.png")
+
+
+@pytest.mark.asyncio
+async def test_chemistry_command(test_config: BotConfig) -> None:
+    """Verifies /chemistry outputs best partner, cursed duo, and rivalry metrics."""
+    bot = EFootballBot(test_config)
+    await bot.excel_manager.save_match(
+        MatchRecord(
+            match_id="M-CHEM-1",
+            date="2026-11-12 10:00:00",
+            result=MatchResult.HOME_WIN,
+            submitted_by="Skan",
+            player_stats=[
+                PlayerStat(player="Suri", goals=2, assists=0, result=MatchResult.WIN),
+                PlayerStat(player="Ashy", goals=1, assists=2, result=MatchResult.WIN),
+                PlayerStat(player="Skan", goals=1, assists=0, result=MatchResult.LOSS),
+            ],
+        )
+    )
+    await bot.excel_manager.save_match(
+        MatchRecord(
+            match_id="M-CHEM-2",
+            date="2026-11-12 11:00:00",
+            result=MatchResult.AWAY_WIN,
+            submitted_by="Skan",
+            player_stats=[
+                PlayerStat(player="Suri", goals=0, assists=1, result=MatchResult.LOSS),
+                PlayerStat(player="Annie", goals=1, assists=0, result=MatchResult.LOSS),
+                PlayerStat(player="Skan", goals=2, assists=1, result=MatchResult.WIN),
+            ],
+        )
+    )
+
+    chem_cmd = bot.tree.get_command("chemistry")
+    assert chem_cmd is not None
+
+    inter = MagicMock(spec=discord.Interaction)
+    inter.guild_id = test_config.guild_id
+    inter.channel_id = test_config.allowed_channel_id
+    inter.response = MagicMock()
+    inter.response.defer = AsyncMock()
+    inter.followup = MagicMock()
+    inter.followup.send = AsyncMock()
+
+    await chem_cmd.callback(inter, "Suri")
+    inter.followup.send.assert_called_once()
+    embed = inter.followup.send.call_args[1]["embed"]
+    assert "Synergy & Rivalry Matrix — Suri" in embed.title
+    assert "Best Partner" in embed.description
+    assert "Cursed Duo" in embed.description
+    assert "\n\n" in embed.description
 
 
 

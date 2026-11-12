@@ -35,6 +35,7 @@ from stats import (
     calculate_match_motm_and_milestones,
     calculate_player_aggregates,
     calculate_player_card_stats,
+    calculate_player_chemistry,
     calculate_player_form,
     calculate_potm_rankings,
     calculate_potw_rankings,
@@ -2189,3 +2190,67 @@ def register_commands(
         embed.set_image(url=f"attachment://{filename}")
         embed.set_footer(text="PAC=OVR · SHO=Goals · PAS=Assists · DRI=GAPG · DEF=Conceded · PHY=Avg(OVR,PAC,DRI)")
         await interaction.followup.send(embed=embed, file=file)
+
+    # 16. /chemistry
+    @tree.command(
+        name="chemistry",
+        description="View a player's best partner, cursed duo, kryptonite, and favorite opponent.",
+    )
+    @app_commands.describe(player="Select player from list")
+    @app_commands.autocomplete(player=player_autocomplete)
+    async def chemistry(interaction: discord.Interaction, player: str) -> None:
+        err = check_guild_and_channel(interaction, config)
+        if err:
+            await interaction.response.send_message(f"❌ {err}", ephemeral=True)
+            return
+
+        await interaction.response.defer()
+
+        all_matches = await excel_manager.get_all_matches()
+        try:
+            chem = calculate_player_chemistry(player, all_matches)
+        except ValueError as exc:
+            await interaction.followup.send(f"❌ {exc}")
+            return
+
+        if chem["total_matches"] == 0:
+            await interaction.followup.send(
+                f"📋 No match appearances recorded yet for **{chem['player']}**.",
+            )
+            return
+
+        sections = []
+        if chem["best_partner"]:
+            bp = chem["best_partner"]
+            sections.append(
+                f"💚 **Best Partner:** **{bp['player']}** — {bp['wins']}W / {bp['losses']}L ({bp['win_rate']:.1f}% WR in {bp['matches']} matches)"
+            )
+        if chem["cursed_duo"]:
+            cd = chem["cursed_duo"]
+            sections.append(
+                f"💀 **Cursed Duo:** **{cd['player']}** — {cd['wins']}W / {cd['losses']}L ({cd['win_rate']:.1f}% WR in {cd['matches']} matches)"
+            )
+        if chem["most_frequent_partner"]:
+            fp = chem["most_frequent_partner"]
+            sections.append(
+                f"🤝 **Most Frequent Teammate:** **{fp['player']}** — {fp['matches']} matches together ({fp['win_rate']:.1f}% WR)"
+            )
+        if chem["favorite_victim"]:
+            fv = chem["favorite_victim"]
+            sections.append(
+                f"🎯 **Favorite Victim:** **{fv['player']}** — {fv['my_wins']}W / {fv['opp_wins']}L against them ({fv['my_win_rate']:.1f}% WR)"
+            )
+        if chem["kryptonite"]:
+            kr = chem["kryptonite"]
+            sections.append(
+                f"🧲 **Kryptonite:** **{kr['player']}** — lost {kr['opp_wins']} of {kr['matches']} against them ({kr['opp_win_rate']:.1f}% opponent WR)"
+            )
+
+        embed = discord.Embed(
+            title=f"🧪 Synergy & Rivalry Matrix — {chem['player']}",
+            description="\n\n".join(sections) if sections else "Not enough teammate/opponent data yet.",
+            color=discord.Color.purple(),
+            timestamp=datetime.now(),
+        )
+        embed.set_footer(text=f"Computed across {chem['total_matches']} matches played • Prefers 2+ match sample when available")
+        await interaction.followup.send(embed=embed)

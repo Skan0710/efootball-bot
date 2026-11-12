@@ -12,6 +12,7 @@ from stats import (
     calculate_match_motm_and_milestones,
     calculate_player_aggregates,
     calculate_player_card_stats,
+    calculate_player_chemistry,
     calculate_player_form,
     calculate_potm_rankings,
     calculate_potw_rankings,
@@ -833,6 +834,70 @@ def test_player_card_stats_and_image_render() -> None:
     data = png_buf.getvalue()
     assert data[:8] == b"\x89PNG\r\n\x1a\n"
     assert len(data) > 5000
+
+
+def test_calculate_player_chemistry() -> None:
+    """Verifies best partner, cursed duo, kryptonite, and favorite victim."""
+    matches = [
+        MatchRecord(
+            match_id="M-CH-1",
+            date="2026-11-10 12:00:00",
+            result=MatchResult.HOME_WIN,
+            submitted_by="Skan",
+            player_stats=[
+                PlayerStat(player="Suri", goals=2, assists=1, result=MatchResult.WIN),
+                PlayerStat(player="Ashy", goals=1, assists=2, result=MatchResult.WIN),
+                PlayerStat(player="Skan", goals=1, assists=0, result=MatchResult.LOSS),
+                PlayerStat(player="Lilly", goals=0, assists=1, result=MatchResult.LOSS),
+            ],
+        ),
+        MatchRecord(
+            match_id="M-CH-2",
+            date="2026-11-10 13:00:00",
+            result=MatchResult.HOME_WIN,
+            submitted_by="Skan",
+            player_stats=[
+                PlayerStat(player="Suri", goals=2, assists=0, result=MatchResult.WIN),
+                PlayerStat(player="Ashy", goals=1, assists=1, result=MatchResult.WIN),
+                PlayerStat(player="Skan", goals=0, assists=1, result=MatchResult.LOSS),
+                PlayerStat(player="Lilly", goals=1, assists=0, result=MatchResult.LOSS),
+            ],
+        ),
+        MatchRecord(
+            match_id="M-CH-3",
+            date="2026-11-11 12:00:00",
+            result=MatchResult.AWAY_WIN,
+            submitted_by="Skan",
+            player_stats=[
+                PlayerStat(player="Suri", goals=1, assists=0, result=MatchResult.LOSS),
+                PlayerStat(player="Annie", goals=0, assists=1, result=MatchResult.LOSS),
+                PlayerStat(player="Azlan", goals=2, assists=1, result=MatchResult.WIN),
+                PlayerStat(player="Skan", goals=1, assists=2, result=MatchResult.WIN),
+            ],
+        ),
+        MatchRecord(
+            match_id="M-CH-4",
+            date="2026-11-11 14:00:00",
+            result=MatchResult.AWAY_WIN,
+            submitted_by="Skan",
+            player_stats=[
+                PlayerStat(player="Suri", goals=0, assists=1, result=MatchResult.LOSS),
+                PlayerStat(player="Annie", goals=1, assists=0, result=MatchResult.LOSS),
+                PlayerStat(player="Azlan", goals=2, assists=0, result=MatchResult.WIN),
+                PlayerStat(player="Ashy", goals=0, assists=2, result=MatchResult.WIN),
+            ],
+        ),
+    ]
+
+    chem = calculate_player_chemistry("Suri", matches)
+    assert chem["player"] == "Suri"
+    assert chem["total_matches"] == 4
+    assert chem["best_partner"]["player"] == "Ashy"
+    assert chem["best_partner"]["win_rate"] == 100.0
+    assert chem["cursed_duo"]["player"] == "Annie"
+    assert chem["cursed_duo"]["win_rate"] == 0.0
+    assert chem["favorite_victim"]["player"] == "Lilly"
+    assert chem["kryptonite"]["player"] == "Azlan"
 
 
 

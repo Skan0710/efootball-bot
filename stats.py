@@ -972,3 +972,120 @@ def calculate_player_card_stats(
         "goals_conceded": goals_conceded,
         "clean_sheets": clean_sheets,
     }
+
+
+def calculate_player_chemistry(player_name: str, matches: List[MatchRecord]) -> dict:
+    """Computes teammate synergy and opponent rivalry stats for a single player."""
+    canonical = canonicalize_player_name(player_name)
+    target_key = canonical.strip().lower()
+    if not target_key:
+        raise ValueError("Player name cannot be empty.")
+
+    partners: Dict[str, dict] = {}
+    opponents: Dict[str, dict] = {}
+    total_matches = 0
+
+    for match in matches:
+        stats_by_key: Dict[str, Tuple[str, PlayerStat]] = {}
+        for stat in match.player_stats:
+            c_name = canonicalize_player_name(stat.player)
+            k = c_name.strip().lower()
+            if k:
+                stats_by_key[k] = (c_name, stat)
+
+        if target_key not in stats_by_key:
+            continue
+
+        total_matches += 1
+        _, me = stats_by_key[target_key]
+        me_win = me.result in (MatchResult.WIN, MatchResult.HOME_WIN)
+        me_loss = me.result in (MatchResult.LOSS, MatchResult.AWAY_WIN)
+
+        for other_key, (other_name, other_stat) in stats_by_key.items():
+            if other_key == target_key:
+                continue
+            o_win = other_stat.result in (MatchResult.WIN, MatchResult.HOME_WIN)
+            o_loss = other_stat.result in (MatchResult.LOSS, MatchResult.AWAY_WIN)
+
+            if (me_win and o_win) or (me_loss and o_loss):
+                p_entry = partners.setdefault(
+                    other_key,
+                    {"player": other_name, "matches": 0, "wins": 0, "losses": 0},
+                )
+                p_entry["matches"] += 1
+                if me_win:
+                    p_entry["wins"] += 1
+                else:
+                    p_entry["losses"] += 1
+            elif (me_win and o_loss) or (me_loss and o_win):
+                o_entry = opponents.setdefault(
+                    other_key,
+                    {"player": other_name, "matches": 0, "my_wins": 0, "opp_wins": 0},
+                )
+                o_entry["matches"] += 1
+                if me_win:
+                    o_entry["my_wins"] += 1
+                else:
+                    o_entry["opp_wins"] += 1
+
+    partner_list = []
+    for entry in partners.values():
+        mp = entry["matches"]
+        entry["win_rate"] = round((entry["wins"] / mp) * 100.0, 1) if mp > 0 else 0.0
+        partner_list.append(entry)
+
+    opponent_list = []
+    for entry in opponents.values():
+        mp = entry["matches"]
+        entry["my_win_rate"] = round((entry["my_wins"] / mp) * 100.0, 1) if mp > 0 else 0.0
+        entry["opp_win_rate"] = round((entry["opp_wins"] / mp) * 100.0, 1) if mp > 0 else 0.0
+        opponent_list.append(entry)
+
+    min2_partners = [p for p in partner_list if p["matches"] >= 2]
+    partner_pool = min2_partners or partner_list
+
+    best_partner = max(
+        partner_pool,
+        key=lambda p: (p["win_rate"], p["wins"], p["matches"]),
+        default=None,
+    )
+    cursed_duo = min(
+        partner_pool,
+        key=lambda p: (p["win_rate"], -p["losses"], -p["matches"]),
+        default=None,
+    )
+    if cursed_duo and best_partner and cursed_duo["player"] == best_partner["player"] and len(partner_pool) == 1 and best_partner["losses"] == 0:
+        cursed_duo = None
+    most_frequent_partner = max(
+        partner_list,
+        key=lambda p: (p["matches"], p["wins"]),
+        default=None,
+    )
+
+    min2_opps = [o for o in opponent_list if o["matches"] >= 2]
+    opp_pool = min2_opps or opponent_list
+
+    fav_pool = [o for o in opp_pool if o["my_wins"] > 0]
+    favorite_victim = max(
+        fav_pool,
+        key=lambda o: (o["my_wins"], o["my_win_rate"], o["matches"]),
+        default=None,
+    )
+    krypt_pool = [o for o in opp_pool if o["opp_wins"] > 0]
+    kryptonite = max(
+        krypt_pool,
+        key=lambda o: (o["opp_wins"], o["opp_win_rate"], o["matches"]),
+        default=None,
+    )
+
+    return {
+        "player": canonical,
+        "total_matches": total_matches,
+        "best_partner": best_partner,
+        "cursed_duo": cursed_duo,
+        "most_frequent_partner": most_frequent_partner,
+        "favorite_victim": favorite_victim,
+        "kryptonite": kryptonite,
+        "partners": sorted(partner_list, key=lambda p: (p["matches"], p["win_rate"]), reverse=True),
+        "opponents": sorted(opponent_list, key=lambda o: (o["matches"], o["my_win_rate"]), reverse=True),
+    }
