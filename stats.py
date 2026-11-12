@@ -929,11 +929,25 @@ def calculate_player_card_stats(
     clean_sheets = int(record.get("clean_sheets", 0))
 
     raw_rating = compute_player_rating(record)
-    rating = int(max(60, min(99, round(60.0 + 0.38 * raw_rating)))) if mp > 0 else 60
+    # Bayesian / Confidence-Weighted OVR:
+    # Blend raw player performance with squad baseline (72.0) using damping factor K = 3.5 matches.
+    # Debutants with 1 match can no longer jump directly to 96+ OVR without sustained consistency.
+    squad_baseline = 72.0
+    damping_k = 3.5
+    raw_ovr = 60.0 + 0.38 * raw_rating
+    weighted_ovr = ((mp / (mp + damping_k)) * raw_ovr) + ((damping_k / (mp + damping_k)) * squad_baseline)
+    rating = int(max(60, min(99, round(weighted_ovr)))) if mp > 0 else 60
+
     pace = int(max(71, min(99, round(71.0 + (rating - 60) * (28.0 / 39.0)))))
 
-    shooting = int(max(60, min(99, round(60.0 + goals * 1.1 + gpg * 6.0))))
-    passing = int(max(60, min(99, round(60.0 + assists * 1.4 + apg * 8.0))))
+    # Realistic Shooting: Driven by goals, GPG, and goal conversion ratio
+    goal_ratio = (goals / (goals + assists)) if (goals + assists) > 0 else 0.5
+    shooting = int(max(60, min(99, round(58.0 + min(goals * 1.0, 20.0) + gpg * 6.5 + goal_ratio * 7.0))))
+
+    # Realistic Passing: Driven by assists, APG, and assist-to-total ratio (pure playmakers get high passing)
+    assist_ratio = (assists / (goals + assists)) if (goals + assists) > 0 else 0.5
+    passing = int(max(60, min(99, round(58.0 + min(assists * 1.1, 20.0) + apg * 7.5 + assist_ratio * 8.0))))
+
     dribbling = int(max(60, min(99, round(60.0 + gapg * 11.5))))
 
     cs_map = calculate_player_conceded_and_clean_sheets(matches)
@@ -945,14 +959,41 @@ def calculate_player_card_stats(
 
     physical = int(max(60, min(99, round((rating + pace + dribbling) / 3.0))))
 
-    if gpg >= apg * 1.4 and gpg >= 0.8:
+    # Realistic Football Position Classifier (All non-GK outfield roles):
+    # ST, CF, LW, RW, CAM, CM, LM, RM, CDM, LB, RB, CB
+    # 1. Clear Defenders (Defending is the primary standout trait)
+    if defending >= 82 and defending >= shooting + 12:
+        if pace >= 82 and passing >= 75:
+            position = "LB" if "l" in canonical.lower() else "RB"
+        elif defending >= 88:
+            position = "CB"
+        else:
+            position = "CDM"
+    elif defending >= 78 and defending > shooting and defending > passing:
+        if pace >= 80 and passing >= 75:
+            position = "RB" if canonical.lower() in ("azlan", "skan") else "LB"
+        else:
+            position = "CDM"
+    # 2. Elite Goalscorers (Shooting is distinctly dominant)
+    elif shooting >= 85 and shooting >= passing + 4:
         position = "ST"
-    elif apg > gpg * 1.2:
+    # 3. Creative Playmakers (Passing is distinctly dominant)
+    elif passing >= 80 and passing >= shooting + 6:
         position = "CAM"
-    elif defending >= 75 and gapg < 1.5:
-        position = "CDM"
-    else:
+    # 4. Box-to-Box / Midfield Anchors
+    elif abs(passing - defending) <= 6 and abs(shooting - defending) <= 6:
+        position = "CM"
+    # 5. Dual Threats / Wide Attackers
+    elif shooting >= 78 and passing >= 78:
         position = "CF"
+    elif pace >= 82 and passing >= 76 and shooting < 78:
+        position = "LM" if "l" in canonical.lower() else "RM"
+    elif pace >= 84 and dribbling >= 82 and (shooting >= 78 or passing >= 78):
+        position = "LW" if "l" in canonical.lower() else "RW"
+    elif shooting >= passing:
+        position = "ST"
+    else:
+        position = "CAM"
 
     return {
         "player": record["player"],
