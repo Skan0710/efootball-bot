@@ -57,6 +57,7 @@ def test_command_registration_names(test_config: BotConfig, tmp_path: Path) -> N
         "hall-of-fame",
         "card",
         "chemistry",
+        "edit-match",
     }
     assert registered_names == expected_commands
 
@@ -900,6 +901,69 @@ async def test_chemistry_command(test_config: BotConfig) -> None:
     assert "Best Partner" in embed.description
     assert "Cursed Duo" in embed.description
     assert "\n\n" in embed.description
+
+
+@pytest.mark.asyncio
+async def test_edit_match_command_and_modal(test_config: BotConfig) -> None:
+    """Verifies /edit-match autocomplete, modal prefill, and saving edited stats."""
+    bot = EFootballBot(test_config)
+    await bot.excel_manager.save_match(
+        MatchRecord(
+            match_id="M-EDIT-1",
+            date="2026-11-12 10:00:00",
+            result=MatchResult.HOME_WIN,
+            submitted_by="Skan",
+            notes="Score: Lilly & Azlan 3 - 2 Skan & Suri (Home Win)",
+            player_stats=[
+                PlayerStat(player="Lilly", goals=3, assists=0, result=MatchResult.WIN),
+                PlayerStat(player="Azlan", goals=0, assists=3, result=MatchResult.WIN),
+                PlayerStat(player="Skan", goals=0, assists=1, result=MatchResult.LOSS),
+                PlayerStat(player="Suri", goals=2, assists=0, result=MatchResult.LOSS),
+            ],
+        )
+    )
+
+    edit_cmd = bot.tree.get_command("edit-match")
+    assert edit_cmd is not None
+
+    # Test autocomplete dropdown
+    inter_ac = MagicMock(spec=discord.Interaction)
+    choices = await edit_cmd._params["match_id"].autocomplete(inter_ac, "M-EDIT-1")
+    assert len(choices) == 1
+    assert choices[0].value == "M-EDIT-1"
+
+    # Execute /edit-match -> sends pre-filled modal
+    inter = MagicMock(spec=discord.Interaction)
+    inter.guild_id = test_config.guild_id
+    inter.channel_id = test_config.allowed_channel_id
+    inter.response = MagicMock()
+    inter.response.send_modal = AsyncMock()
+
+    await edit_cmd.callback(inter, "M-EDIT-1")
+    inter.response.send_modal.assert_called_once()
+    modal = inter.response.send_modal.call_args[0][0]
+    assert "Lilly, 3, 0" in modal.home_stats_input.default
+    assert "Suri, 2, 0" in modal.away_stats_input.default
+
+    # Modify and submit modal
+    modal.home_stats_input._value = "Lilly, 4, 0\nAzlan, 0, 4"
+    modal.away_stats_input._value = "Skan, 1, 1\nSuri, 1, 1"
+    modal.scores_input._value = "4, 2"
+    modal.result_input._value = "Home Win"
+
+    inter_sub = MagicMock(spec=discord.Interaction)
+    inter_sub.response = MagicMock()
+    inter_sub.response.send_message = AsyncMock()
+    await modal.on_submit(inter_sub)
+
+    inter_sub.response.send_message.assert_called_once()
+    upd_embed = inter_sub.response.send_message.call_args[1]["embed"]
+    assert "Match Updated — M-EDIT-1" in upd_embed.title
+
+    updated_rec = await bot.excel_manager.get_match("M-EDIT-1")
+    assert updated_rec is not None
+    lilly_stat = next(s for s in updated_rec.player_stats if s.player == "Lilly")
+    assert lilly_stat.goals == 4
 
 
 

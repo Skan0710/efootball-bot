@@ -40,6 +40,7 @@ from stats import (
     calculate_potm_rankings,
     calculate_potw_rankings,
     compute_player_rating,
+    extract_match_scores,
     generate_fair_teams,
     get_all_teammates,
     get_leaderboard,
@@ -755,38 +756,16 @@ class AddMatchTextModal(discord.ui.Modal, title="Edit Match Players, Stats & Res
             else:
                 h_team = teams_val
 
-        scores_val = self.scores_input.value.strip()
-        h_score: Optional[int] = None
-        a_score: Optional[int] = None
-        if scores_val and "," in scores_val:
-            try:
-                hs_str, as_str = [s.strip() for s in scores_val.split(",", 1)]
-                h_score = int(hs_str)
-                a_score = int(as_str)
-            except ValueError:
-                h_score = sum(c.goals for c in new_home_c)
-                a_score = sum(a.goals for a in new_away_c)
-        else:
-            h_score = sum(c.goals for c in new_home_c)
-            a_score = sum(a.goals for a in new_away_c)
-
-        res_val = self.result_input.value.strip()
-        if res_val:
-            try:
-                res = MatchResult.from_str(res_val)
-            except ValueError:
-                await interaction.response.send_message(
-                    f"❌ Invalid result '{res_val}'. Must be Home Win, Away Win, or Draw.",
-                    ephemeral=True,
-                )
-                return
-        else:
-            if (h_score or 0) > (a_score or 0):
-                res = MatchResult.HOME_WIN
-            elif (h_score or 0) < (a_score or 0):
-                res = MatchResult.AWAY_WIN
-            else:
-                res = MatchResult.DRAW
+        try:
+            h_score, a_score, res = _parse_scores_and_result(
+                self.scores_input.value.strip(),
+                self.result_input.value.strip(),
+                new_home_c,
+                new_away_c,
+            )
+        except ValueError as exc:
+            await interaction.response.send_message(f"❌ {exc}", ephemeral=True)
+            return
 
         preview_embed = build_preview_embed(
             candidates=new_home_c,
@@ -814,6 +793,156 @@ class AddMatchTextModal(discord.ui.Modal, title="Edit Match Players, Stats & Res
         )
 
         await interaction.response.send_message(embed=preview_embed, view=view, ephemeral=True)
+
+
+def _parse_scores_and_result(
+    scores_val: str,
+    res_val: str,
+    home_c: List[OCRPlayerCandidate],
+    away_c: List[OCRPlayerCandidate],
+) -> Tuple[int, int, MatchResult]:
+    """Parses 'home, away' score text and match result with goal-sum fallback."""
+    if scores_val and "," in scores_val:
+        try:
+            hs_str, as_str = [s.strip() for s in scores_val.split(",", 1)]
+            h_score = int(hs_str)
+            a_score = int(as_str)
+        except ValueError:
+            h_score = sum(c.goals for c in home_c)
+            a_score = sum(a.goals for a in away_c)
+    else:
+        h_score = sum(c.goals for c in home_c)
+        a_score = sum(a.goals for a in away_c)
+
+    if res_val:
+        res = MatchResult.from_str(res_val)
+    elif h_score > a_score:
+        res = MatchResult.HOME_WIN
+    elif h_score < a_score:
+        res = MatchResult.AWAY_WIN
+    else:
+        res = MatchResult.DRAW
+
+    return h_score, a_score, res
+
+
+class EditSavedMatchModal(discord.ui.Modal, title="Edit Saved Match"):
+    """Modal pre-populated with a saved match's stats to fix typos without deleting."""
+
+    home_stats_input = discord.ui.TextInput(
+        label="Home Players: Name, Goals, Assists",
+        style=discord.TextStyle.paragraph,
+        required=True,
+        max_length=500,
+    )
+
+    away_stats_input = discord.ui.TextInput(
+        label="Away Players: Name, Goals, Assists",
+        style=discord.TextStyle.paragraph,
+        required=False,
+        max_length=500,
+    )
+
+    scores_input = discord.ui.TextInput(
+        label="Home Score, Away Score (e.g. 3, 2)",
+        style=discord.TextStyle.short,
+        required=False,
+        max_length=50,
+    )
+
+    result_input = discord.ui.TextInput(
+        label="Result: Home Win, Away Win, or Draw",
+        style=discord.TextStyle.short,
+        required=False,
+        max_length=20,
+    )
+
+    def __init__(self, match_record: MatchRecord, excel_manager: ExcelManager) -> None:
+        super().__init__(title=f"Edit {match_record.match_id}")
+        self.match_record = match_record
+        self.excel_manager = excel_manager
+
+        if match_record.result == MatchResult.AWAY_WIN:
+            home_list = [p for p in match_record.player_stats if p.result in (MatchResult.LOSS, MatchResult.AWAY_WIN)]
+            away_list = [p for p in match_record.player_stats if p.result in (MatchResult.WIN, MatchResult.HOME_WIN)]
+        elif match_record.result == MatchResult.DRAW:
+            half = max(1, len(match_record.player_stats) // 2)
+            home_list = match_record.player_stats[:half]
+            away_list = match_record.player_stats[half:]
+        else:
+            home_list = [p for p in match_record.player_stats if p.result in (MatchResult.WIN, MatchResult.HOME_WIN)]
+            away_list = [p for p in match_record.player_stats if p.result in (MatchResult.LOSS, MatchResult.AWAY_WIN)]
+
+        hs, a_s = extract_match_scores(match_record)
+        self.home_stats_input.default = "\n".join(f"{p.player}, {p.goals}, {p.assists}" for p in home_list)
+        self.away_stats_input.default = "\n".join(f"{p.player}, {p.goals}, {p.assists}" for p in away_list)
+        self.scores_input.default = f"{hs}, {a_s}"
+        self.result_input.default = match_record.result.value
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        new_home_c, home_errs = parse_modal_candidate_lines(self.home_stats_input.value, prefix="Home")
+        new_away_c, away_errs = parse_modal_candidate_lines(self.away_stats_input.value, prefix="Away")
+        all_errors = home_errs + away_errs
+        if all_errors:
+            await interaction.response.send_message(
+                "❌ **Validation Errors:**\n" + "\n".join(all_errors[:5]),
+                ephemeral=True,
+            )
+            return
+
+        try:
+            h_score, a_score, res = _parse_scores_and_result(
+                self.scores_input.value.strip(),
+                self.result_input.value.strip(),
+                new_home_c,
+                new_away_c,
+            )
+        except ValueError as exc:
+            await interaction.response.send_message(f"❌ {exc}", ephemeral=True)
+            return
+
+        if res in (MatchResult.HOME_WIN, MatchResult.WIN):
+            h_outcome, a_outcome = MatchResult.WIN, MatchResult.LOSS
+        elif res in (MatchResult.AWAY_WIN, MatchResult.LOSS):
+            h_outcome, a_outcome = MatchResult.LOSS, MatchResult.WIN
+        else:
+            h_outcome = a_outcome = MatchResult.DRAW
+
+        updated_stats = [
+            PlayerStat(player=c.player, goals=c.goals, assists=c.assists, result=h_outcome)
+            for c in new_home_c
+        ] + [
+            PlayerStat(player=a.player, goals=a.goals, assists=a.assists, result=a_outcome)
+            for a in new_away_c
+        ]
+
+        h_names = " & ".join(c.player for c in new_home_c) or "Home"
+        a_names = " & ".join(a.player for a in new_away_c) or "Away"
+        updated_record = MatchRecord(
+            match_id=self.match_record.match_id,
+            date=self.match_record.date,
+            result=res,
+            submitted_by=self.match_record.submitted_by,
+            screenshot_ref=self.match_record.screenshot_ref,
+            notes=f"Score: {h_names} {h_score} - {a_score} {a_names} ({res.value})",
+            player_stats=updated_stats,
+        )
+
+        ok = await self.excel_manager.update_match(updated_record)
+        if not ok:
+            await interaction.response.send_message(
+                f"❌ Match **{self.match_record.match_id}** was not found in the workbook.",
+                ephemeral=True,
+            )
+            return
+
+        embed = discord.Embed(
+            title=f"✅ Match Updated — {updated_record.match_id}",
+            description=f"{format_match_scoreline(updated_record)}\n\nResult: **{res.value}** • Leaderboard recalculated.",
+            color=discord.Color.green(),
+            timestamp=datetime.now(),
+        )
+        await interaction.response.send_message(embed=embed)
 
 
 def parse_fair_team_names(raw_names: str) -> List[str]:
@@ -2254,3 +2383,50 @@ def register_commands(
         )
         embed.set_footer(text=f"Computed across {chem['total_matches']} matches played • Prefers 2+ match sample when available")
         await interaction.followup.send(embed=embed)
+
+    async def match_id_autocomplete(
+        interaction: discord.Interaction,
+        current: str,
+    ) -> List[app_commands.Choice[str]]:
+        """Dropdown list of recent matches showing players and score for easy selection."""
+        query = current.strip().lower()
+        try:
+            all_matches = await excel_manager.get_all_matches()
+        except Exception:
+            return []
+
+        choices: List[app_commands.Choice[str]] = []
+        for m in reversed(all_matches):
+            plain_score = format_match_scoreline(m).replace("**", "")
+            label = f"{m.match_id} — {plain_score}"
+            if len(label) > 100:
+                label = label[:97] + "..."
+            if not query or query in label.lower():
+                choices.append(app_commands.Choice(name=label, value=m.match_id))
+            if len(choices) >= 25:
+                break
+        return choices
+
+    # 17. /edit-match
+    @tree.command(
+        name="edit-match",
+        description="Edit a saved match's players, goals, assists, scores, or result.",
+    )
+    @app_commands.describe(match_id="Select the match to edit")
+    @app_commands.autocomplete(match_id=match_id_autocomplete)
+    async def edit_match(interaction: discord.Interaction, match_id: str) -> None:
+        err = check_guild_and_channel(interaction, config)
+        if err:
+            await interaction.response.send_message(f"❌ {err}", ephemeral=True)
+            return
+
+        match_rec = await excel_manager.get_match(match_id.strip())
+        if not match_rec:
+            await interaction.response.send_message(
+                f"❌ Match **{match_id}** was not found.",
+                ephemeral=True,
+            )
+            return
+
+        modal = EditSavedMatchModal(match_record=match_rec, excel_manager=excel_manager)
+        await interaction.response.send_modal(modal)

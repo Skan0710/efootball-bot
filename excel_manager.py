@@ -495,6 +495,53 @@ class ExcelManager:
         finally:
             wb.close()
 
+    async def update_match(self, match: MatchRecord) -> bool:
+        """Updates an existing match record and recalculates all statistics atomically."""
+        async with self._lock:
+            return self._sync_update_match(match)
+
+    def _sync_update_match(self, match: MatchRecord) -> bool:
+        """Synchronous implementation of update_match."""
+        if not self.workbook_path.exists():
+            return False
+
+        self.create_backup()
+        wb = openpyxl.load_workbook(self.workbook_path)
+        try:
+            ws_matches = wb[SHEET_MATCHES]
+            target_row = -1
+            for row_idx in range(2, ws_matches.max_row + 1):
+                val = ws_matches.cell(row=row_idx, column=1).value
+                if val and str(val).strip() == match.match_id.strip():
+                    target_row = row_idx
+                    break
+
+            if target_row == -1:
+                LOGGER.warning("Attempted to update non-existent match ID: %s", match.match_id)
+                return False
+
+            p_json = json.dumps(
+                [
+                    {
+                        "player": s.player,
+                        "goals": s.goals,
+                        "assists": s.assists,
+                        "result": s.result.value,
+                    }
+                    for s in match.player_stats
+                ]
+            )
+            ws_matches.cell(row=target_row, column=3, value=match.result.value)
+            ws_matches.cell(row=target_row, column=6, value=match.notes)
+            ws_matches.cell(row=target_row, column=7, value=p_json)
+
+            self._sync_recalculate_all_sheets(wb)
+            wb.save(self.workbook_path)
+            LOGGER.info("Updated match %s and auto-recalculated all sheets", match.match_id)
+            return True
+        finally:
+            wb.close()
+
     async def delete_match(self, match_id: str) -> bool:
         """Removes a match record and auto-recalculates all statistics atomically."""
         async with self._lock:

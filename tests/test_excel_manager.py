@@ -242,3 +242,50 @@ async def test_backup_creation_on_save(tmp_path: Path) -> None:
     assert backup_dir.exists()
     backups = list(backup_dir.glob("matches_*.xlsx"))
     assert len(backups) >= 1
+
+
+@pytest.mark.asyncio
+async def test_update_match_recalculates_sheets(tmp_path: Path) -> None:
+    """Verifies update_match edits match stats/result in-place and recalculates Leaderboard."""
+    wb_path = tmp_path / "edit_wb.xlsx"
+    manager = ExcelManager(wb_path)
+
+    original = MatchRecord(
+        match_id="M-UPD-1",
+        date="2026-11-12 10:00:00",
+        result=MatchResult.HOME_WIN,
+        submitted_by="Skan",
+        notes="Score: Suri 2 - 1 Skan (Home Win)",
+        player_stats=[
+            PlayerStat(player="Suri", goals=2, assists=0, result=MatchResult.WIN),
+            PlayerStat(player="Skan", goals=1, assists=0, result=MatchResult.LOSS),
+        ],
+    )
+    await manager.save_match(original)
+
+    updated = MatchRecord(
+        match_id="M-UPD-1",
+        date="2026-11-12 10:00:00",
+        result=MatchResult.AWAY_WIN,
+        submitted_by="Skan",
+        notes="Score: Suri 1 - 3 Skan (Away Win)",
+        player_stats=[
+            PlayerStat(player="Suri", goals=1, assists=0, result=MatchResult.LOSS),
+            PlayerStat(player="Skan", goals=3, assists=0, result=MatchResult.WIN),
+        ],
+    )
+    assert await manager.update_match(updated) is True
+    assert await manager.update_match(
+        MatchRecord(match_id="M-MISSING", date="2026-11-12", result=MatchResult.DRAW, submitted_by="X")
+    ) is False
+
+    fetched = await manager.get_match("M-UPD-1")
+    assert fetched is not None
+    assert fetched.result == MatchResult.AWAY_WIN
+    assert fetched.notes == "Score: Suri 1 - 3 Skan (Away Win)"
+
+    lb = await manager.get_leaderboard_from_sheet()
+    skan_row = next(r for r in lb if r["player"] == "Skan")
+    suri_row = next(r for r in lb if r["player"] == "Suri")
+    assert skan_row["goals"] == 3 and skan_row["wins"] == 1 and skan_row["hattricks"] == 1
+    assert suri_row["goals"] == 1 and suri_row["losses"] == 1
