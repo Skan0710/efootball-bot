@@ -37,8 +37,11 @@ from stats import (
     calculate_player_card_stats,
     calculate_player_chemistry,
     calculate_player_form,
+    calculate_player_tierlist,
+    calculate_player_trophies,
     calculate_potm_rankings,
     calculate_potw_rankings,
+    calculate_session_recap,
     compute_player_rating,
     extract_match_scores,
     generate_fair_teams,
@@ -46,7 +49,13 @@ from stats import (
     get_leaderboard,
     get_player_record,
 )
-from visuals import render_compare_chart, render_fc27_card, render_form_chart
+from visuals import (
+    render_compare_chart,
+    render_fc27_card,
+    render_form_chart,
+    render_match_summary_card,
+    render_tierlist_card,
+)
 
 LOGGER = logging.getLogger("efootball_bot.commands")
 
@@ -622,10 +631,10 @@ class MatchPreviewView(discord.ui.View):
             await interaction.edit_original_response(embed=success_embed, view=self)
 
             # Announce MOTM & Milestones publicly in the channel if available
-            if (motm or milestones) and isinstance(getattr(interaction, "channel", None), discord.abc.Messageable):
+            if isinstance(getattr(interaction, "channel", None), discord.abc.Messageable):
                 try:
                     announce_embed = discord.Embed(
-                        title=f"📣 Post-Match Honors — {format_match_scoreline(record)}",
+                        title=f"📣 Match Saved — {format_match_scoreline(record)}",
                         color=discord.Color.gold(),
                         timestamp=datetime.now(),
                     )
@@ -641,9 +650,21 @@ class MatchPreviewView(discord.ui.View):
                             value="\n".join(milestones),
                             inline=False,
                         )
-                    await interaction.channel.send(embed=announce_embed)
+
+                    banner_buf = render_match_summary_card(
+                        record,
+                        self.home_team,
+                        self.away_team,
+                        h_val,
+                        a_val,
+                        self.result,
+                    )
+                    banner_filename = f"match_summary_{record.match_id}.png"
+                    banner_file = discord.File(fp=banner_buf, filename=banner_filename)
+                    announce_embed.set_image(url=f"attachment://{banner_filename}")
+                    await interaction.channel.send(embed=announce_embed, file=banner_file)
                 except Exception as pub_exc:
-                    LOGGER.debug("Skipping public MOTM announcement: %s", pub_exc)
+                    LOGGER.debug("Skipping public match announcement: %s", pub_exc)
 
             LOGGER.info("Match %s saved by user %s (%s)", match_id, interaction.user.name, interaction.user.id)
         except PermissionError:
@@ -2490,3 +2511,152 @@ def register_commands(
         )
         embed.set_footer(text=f"Across {len(records)} registered players • Fetched from Excel")
         await interaction.followup.send(embed=embed)
+
+    # 19. /recap
+    @tree.command(
+        name="recap",
+        description="View a session recap of today's matches, session MVP, and highlights.",
+    )
+    @app_commands.describe(date="Specific date in YYYY-MM-DD format (optional, defaults to latest session)")
+    async def recap(interaction: discord.Interaction, date: Optional[str] = None) -> None:
+        err = check_guild_and_channel(interaction, config)
+        if err:
+            await interaction.response.send_message(f"❌ {err}", ephemeral=True)
+            return
+
+        await interaction.response.defer()
+
+        all_matches = await excel_manager.get_all_matches()
+        summary = calculate_session_recap(all_matches, target_date=date)
+
+        if summary["total_matches"] == 0:
+            date_label = date or "the latest match day"
+            await interaction.followup.send(f"📋 No matches found for **{date_label}**.")
+            return
+
+        embed = discord.Embed(
+            title=f"📋 Matchday Session Recap — {summary['date']}",
+            color=discord.Color.blue(),
+            timestamp=datetime.now(),
+        )
+
+        overview_lines = [
+            f"**Matches Played:** {summary['total_matches']}",
+            f"**Total Goals Scored:** {summary['total_goals']}",
+            f"**Clean Sheet Victories:** {summary['clean_sheets']}",
+        ]
+        if summary["biggest_win_match"]:
+            bw = summary["biggest_win_match"]
+            overview_lines.append(f"**Biggest Blowout (+{summary['biggest_win_margin']} goals):** {format_match_scoreline(bw)}")
+
+        embed.add_field(name="📊 Session Overview", value="\n".join(overview_lines), inline=False)
+
+        mvp = summary.get("mvp")
+        if mvp:
+            embed.add_field(
+                name="⭐ Session MVP",
+                value=f"👑 **{mvp['player']}** — {mvp['goals']}G, {mvp['assists']}A ({mvp['wins']}W - {mvp['losses']}L • Impact: {mvp['score']})",
+                inline=False,
+            )
+
+        leader_bits = []
+        if summary.get("top_scorer") and summary["top_scorer"]["goals"] > 0:
+            ts = summary["top_scorer"]
+            leader_bits.append(f"⚽ **Top Scorer:** {ts['player']} ({ts['goals']}G)")
+        if summary.get("top_playmaker") and summary["top_playmaker"]["assists"] > 0:
+            tp = summary["top_playmaker"]
+            leader_bits.append(f"🎯 **Playmaker:** {tp['player']} ({tp['assists']}A)")
+        if leader_bits:
+            embed.add_field(name="🔥 Top Performers", value="\n".join(leader_bits), inline=False)
+
+        match_lines = [f"{idx}. {format_match_scoreline(m)}" for idx, m in enumerate(reversed(summary["matches"][:8]), start=1)]
+        embed.add_field(name="📜 Match Results (Latest first)", value="\n\n".join(match_lines), inline=False)
+        embed.set_footer(text=f"Total session matches: {summary['total_matches']} • Use /recap date:YYYY-MM-DD for past sessions")
+        await interaction.followup.send(embed=embed)
+
+    # 20. /trophies
+    @tree.command(
+        name="trophies",
+        description="View unlockable career achievements, badges, and milestones for a player.",
+    )
+    @app_commands.describe(player="Select player from list")
+    @app_commands.autocomplete(player=player_autocomplete)
+    async def trophies(interaction: discord.Interaction, player: str) -> None:
+        err = check_guild_and_channel(interaction, config)
+        if err:
+            await interaction.response.send_message(f"❌ {err}", ephemeral=True)
+            return
+
+        await interaction.response.defer()
+
+        all_matches = await excel_manager.get_all_matches()
+        all_stats = await excel_manager.get_all_player_stats()
+        aggs = calculate_player_aggregates(all_stats, matches=all_matches)
+        t_data = calculate_player_trophies(player, all_matches, aggs)
+
+        embed = discord.Embed(
+            title=f"🏆 Trophy Room & Badges — {t_data['player']}",
+            description=f"Unlocked **{t_data['total_unlocked']} of {t_data['total_badges']}** Achievements",
+            color=discord.Color.gold(),
+            timestamp=datetime.now(),
+        )
+
+        if t_data["unlocked"]:
+            unlocked_lines = [
+                f"{emoji} **{name}** — *{desc}*"
+                for emoji, name, desc, _ in t_data["unlocked"]
+            ]
+            embed.add_field(name="✨ Unlocked Achievements", value="\n\n".join(unlocked_lines), inline=False)
+
+        if t_data["locked"]:
+            locked_lines = [
+                f"🔒 **{name}** — *{desc}*"
+                for _, name, desc, _ in t_data["locked"]
+            ]
+            embed.add_field(name="⏳ In Progress / Locked", value="\n\n".join(locked_lines), inline=False)
+
+        embed.set_footer(text="Earn badges dynamically by playing matches and setting club records!")
+        await interaction.followup.send(embed=embed)
+
+    # 21. /tierlist
+    @tree.command(
+        name="tierlist",
+        description="Display an S/A/B/C visual tier list ranking all server players.",
+    )
+    async def tierlist(interaction: discord.Interaction) -> None:
+        err = check_guild_and_channel(interaction, config)
+        if err:
+            await interaction.response.send_message(f"❌ {err}", ephemeral=True)
+            return
+
+        await interaction.response.defer()
+
+        records = await excel_manager.get_leaderboard_from_sheet()
+        all_matches = await excel_manager.get_all_matches()
+        if not records:
+            await interaction.followup.send("📋 No player records found to generate a tier list.")
+            return
+
+        tiers = calculate_player_tierlist(records, all_matches)
+        chart_buf = render_tierlist_card(tiers)
+        chart_file = discord.File(fp=chart_buf, filename="server_tierlist.png")
+
+        s_names = ", ".join(f"{p['player']} ({p['ovr']})" for p in tiers["S"]) or "None"
+        a_names = ", ".join(f"{p['player']} ({p['ovr']})" for p in tiers["A"]) or "None"
+        b_names = ", ".join(f"{p['player']} ({p['ovr']})" for p in tiers["B"]) or "None"
+        c_names = ", ".join(f"{p['player']} ({p['ovr']})" for p in tiers["C"]) or "None"
+
+        embed = discord.Embed(
+            title="🏅 Co-op Squad Tier List",
+            description=(
+                f"🔴 **S Tier (88+ OVR):** {s_names}\n\n"
+                f"🟠 **A Tier (78-87 OVR):** {a_names}\n\n"
+                f"🔵 **B Tier (70-77 OVR):** {b_names}\n\n"
+                f"⚪ **C Tier (<70 OVR):** {c_names}"
+            ),
+            color=discord.Color.dark_purple(),
+            timestamp=datetime.now(),
+        )
+        embed.set_image(url="attachment://server_tierlist.png")
+        embed.set_footer(text="Rankings calibrated by FC 27 OVR ratings and career statistics")
+        await interaction.followup.send(embed=embed, file=chart_file)

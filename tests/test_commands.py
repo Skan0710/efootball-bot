@@ -59,6 +59,9 @@ def test_command_registration_names(test_config: BotConfig, tmp_path: Path) -> N
         "chemistry",
         "edit-match",
         "leaders",
+        "recap",
+        "trophies",
+        "tierlist",
     }
     assert registered_names == expected_commands
 
@@ -1007,6 +1010,76 @@ async def test_leaders_command(test_config: BotConfig) -> None:
     assert "**Hattricks:** **Suri** — 1" in embed.description
     assert "**Clean Sheets:** **Suri, Azlan** — 1" in embed.description
     assert "\n\n" in embed.description
+
+
+@pytest.mark.asyncio
+async def test_recap_trophies_and_tierlist_commands(test_config: BotConfig) -> None:
+    """Verifies /recap, /trophies, and /tierlist execute and return rich embeds and images."""
+    bot = EFootballBot(test_config)
+    await bot.excel_manager.save_match(
+        MatchRecord(
+            match_id="M-REC-1",
+            date="2026-11-13 14:00:00",
+            result=MatchResult.HOME_WIN,
+            submitted_by="Skan",
+            notes="Score: Suri & Skan 3 - 1 Annie & Azlan (Home Win)",
+            player_stats=[
+                PlayerStat(player="Suri", goals=2, assists=1, result=MatchResult.WIN),
+                PlayerStat(player="Skan", goals=1, assists=2, result=MatchResult.WIN),
+                PlayerStat(player="Annie", goals=1, assists=0, result=MatchResult.LOSS),
+                PlayerStat(player="Azlan", goals=0, assists=1, result=MatchResult.LOSS),
+            ],
+        )
+    )
+
+    recap_cmd = bot.tree.get_command("recap")
+    trophies_cmd = bot.tree.get_command("trophies")
+    tierlist_cmd = bot.tree.get_command("tierlist")
+    assert recap_cmd is not None and trophies_cmd is not None and tierlist_cmd is not None
+
+    # Test /recap
+    inter_r = MagicMock(spec=discord.Interaction)
+    inter_r.guild_id = test_config.guild_id
+    inter_r.channel_id = test_config.allowed_channel_id
+    inter_r.response = MagicMock()
+    inter_r.response.defer = AsyncMock()
+    inter_r.followup = MagicMock()
+    inter_r.followup.send = AsyncMock()
+
+    await recap_cmd.callback(inter_r, "2026-11-13")
+    inter_r.followup.send.assert_called_once()
+    r_embed = inter_r.followup.send.call_args[1]["embed"]
+    assert "Matchday Session Recap — 2026-11-13" in r_embed.title
+    assert any("Session MVP" in f.name for f in r_embed.fields)
+
+    # Test /trophies
+    inter_t = MagicMock(spec=discord.Interaction)
+    inter_t.guild_id = test_config.guild_id
+    inter_t.channel_id = test_config.allowed_channel_id
+    inter_t.response = MagicMock()
+    inter_t.response.defer = AsyncMock()
+    inter_t.followup = MagicMock()
+    inter_t.followup.send = AsyncMock()
+
+    await trophies_cmd.callback(inter_t, "Suri")
+    inter_t.followup.send.assert_called_once()
+    t_embed = inter_t.followup.send.call_args[1]["embed"]
+    assert "Trophy Room & Badges — Suri" in t_embed.title
+
+    # Test /tierlist
+    inter_tl = MagicMock(spec=discord.Interaction)
+    inter_tl.guild_id = test_config.guild_id
+    inter_tl.channel_id = test_config.allowed_channel_id
+    inter_tl.response = MagicMock()
+    inter_tl.response.defer = AsyncMock()
+    inter_tl.followup = MagicMock()
+    inter_tl.followup.send = AsyncMock()
+
+    await tierlist_cmd.callback(inter_tl)
+    inter_tl.followup.send.assert_called_once()
+    tl_kwargs = inter_tl.followup.send.call_args[1]
+    assert "Co-op Squad Tier List" in tl_kwargs["embed"].title
+    assert isinstance(tl_kwargs["file"], discord.File)
 
 
 
