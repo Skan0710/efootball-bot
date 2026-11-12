@@ -839,6 +839,10 @@ def test_player_card_stats_and_image_render() -> None:
     assert data[:8] == b"\x89PNG\r\n\x1a\n"
     assert len(data) > 5000
 
+    # Also verify rendering with a player who has a PFP in the pfp/ directory
+    lilly_buf = render_fc27_card(lilly_card)
+    assert lilly_buf.getvalue()[:8] == b"\x89PNG\r\n\x1a\n"
+
 
 def test_calculate_player_chemistry() -> None:
     """Verifies best partner, cursed duo, kryptonite, and favorite victim."""

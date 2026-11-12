@@ -58,6 +58,7 @@ def test_command_registration_names(test_config: BotConfig, tmp_path: Path) -> N
         "card",
         "chemistry",
         "edit-match",
+        "leaders",
     }
     assert registered_names == expected_commands
 
@@ -964,6 +965,48 @@ async def test_edit_match_command_and_modal(test_config: BotConfig) -> None:
     assert updated_rec is not None
     lilly_stat = next(s for s in updated_rec.player_stats if s.player == "Lilly")
     assert lilly_stat.goals == 4
+
+
+@pytest.mark.asyncio
+async def test_leaders_command(test_config: BotConfig) -> None:
+    """Verifies /leaders displays the #1 leader(s) for each stat category."""
+    bot = EFootballBot(test_config)
+    await bot.excel_manager.save_match(
+        MatchRecord(
+            match_id="M-LEAD-1",
+            date="2026-11-12 11:00:00",
+            result=MatchResult.HOME_WIN,
+            submitted_by="Skan",
+            notes="Score: Suri & Azlan 4 - 0 Skan & Lilly (Home Win)",
+            player_stats=[
+                PlayerStat(player="Suri", goals=4, assists=0, result=MatchResult.WIN),
+                PlayerStat(player="Azlan", goals=0, assists=4, result=MatchResult.WIN),
+                PlayerStat(player="Skan", goals=0, assists=0, result=MatchResult.LOSS),
+                PlayerStat(player="Lilly", goals=0, assists=0, result=MatchResult.LOSS),
+            ],
+        )
+    )
+
+    leaders_cmd = bot.tree.get_command("leaders")
+    assert leaders_cmd is not None
+
+    inter = MagicMock(spec=discord.Interaction)
+    inter.guild_id = test_config.guild_id
+    inter.channel_id = test_config.allowed_channel_id
+    inter.response = MagicMock()
+    inter.response.defer = AsyncMock()
+    inter.followup = MagicMock()
+    inter.followup.send = AsyncMock()
+
+    await leaders_cmd.callback(inter)
+    inter.followup.send.assert_called_once()
+    embed = inter.followup.send.call_args[1]["embed"]
+    assert "Stat Leaders" in embed.title
+    assert "**Goals:** **Suri** — 4" in embed.description
+    assert "**Assists:** **Azlan** — 4" in embed.description
+    assert "**Hattricks:** **Suri** — 1" in embed.description
+    assert "**Clean Sheets:** **Suri, Azlan** — 1" in embed.description
+    assert "\n\n" in embed.description
 
 
 

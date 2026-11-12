@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import io
 import os
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps
+
+from models import canonicalize_player_name
 
 
 def _load_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
@@ -36,6 +39,43 @@ def _load_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont | ImageF
         return ImageFont.load_default(size=size)
     except TypeError:
         return ImageFont.load_default()
+
+
+def _find_player_pfp(player_name: str, pfp_dir: Optional[Path] = None) -> Optional[Path]:
+    """Locates an avatar image for the player in the pfp directory if present.
+
+    Searches for exact name, lowercase name, canonical name, and alias variants.
+    """
+    directory = pfp_dir or (Path(__file__).resolve().parent / "pfp")
+    if not directory.exists() or not directory.is_dir():
+        return None
+
+    raw = player_name.strip()
+    canonical = canonicalize_player_name(raw)
+
+    keys = {
+        raw.lower(),
+        canonical.lower(),
+    }
+    if canonical.lower() == "lilly":
+        keys.add("maple")
+
+    for file_path in directory.iterdir():
+        if not file_path.is_file():
+            continue
+        stem = file_path.stem.strip().lower()
+        if stem in keys:
+            return file_path
+
+    # Fallback to prefix matching (e.g. 'suribg' matching 'suri')
+    for file_path in directory.iterdir():
+        if not file_path.is_file():
+            continue
+        stem = file_path.stem.strip().lower()
+        if any(stem.startswith(k) or k.startswith(stem) for k in keys if len(stem) >= 3):
+            return file_path
+
+    return None
 
 
 def _card_theme(rating: int) -> Dict[str, Tuple[int, int, int]]:
@@ -184,15 +224,40 @@ def render_fc27_card(card: dict) -> io.BytesIO:
     # Small club pill under position
     draw.text((88, 162), "CO-OP FC", font=font_tier, fill=theme["subtext"], anchor="mm")
 
-    # Stylized Avatar / Crest Emblem on center-right
+    # Stylized Avatar / Crest Emblem or Player PFP on center-right
     cx, cy = 266, 200
-    draw.ellipse([(cx - 88, cy - 88), (cx + 88, cy + 88)], fill=(*theme["accent_soft"], 90), outline=(*theme["accent"], 220), width=4)
-    draw.ellipse([(cx - 72, cy - 72), (cx + 72, cy + 72)], fill=(*theme["bg_bot"], 180), outline=(*theme["divider"], 180), width=2)
-    # Stylized footballer shoulders & head silhouette
-    draw.ellipse([(cx - 24, cy - 48), (cx + 24, cy + 0)], fill=theme["accent"])
-    draw.chord([(cx - 50, cy + 2), (cx + 50, cy + 78)], start=180, end=360, fill=theme["accent"])
-    initials = "".join(ch for ch in str(card["player"])[:2]).upper() or "FC"
-    draw.text((cx, cy + 32), initials, font=_load_font(22, bold=True), fill=theme["bg_bot"], anchor="mm")
+    radius = 82
+    draw.ellipse([(cx - radius - 6, cy - radius - 6), (cx + radius + 6, cy + radius + 6)], fill=(*theme["accent_soft"], 90), outline=(*theme["accent"], 220), width=4)
+
+    pfp_path = _find_player_pfp(str(card["player"]))
+    rendered_pfp = False
+
+    if pfp_path:
+        try:
+            with Image.open(pfp_path) as pfp_img:
+                # Convert to RGBA and center-crop / resize into a square
+                pfp_rgba = pfp_img.convert("RGBA")
+                size = radius * 2
+                cropped = ImageOps.fit(pfp_rgba, (size, size), centering=(0.5, 0.5))
+
+                # Circular mask
+                circle_mask = Image.new("L", (size, size), 0)
+                mask_draw = ImageDraw.Draw(circle_mask)
+                mask_draw.ellipse([(0, 0), (size - 1, size - 1)], fill=255)
+
+                canvas.paste(cropped, (cx - radius, cy - radius), circle_mask)
+                draw.ellipse([(cx - radius, cy - radius), (cx + radius, cy + radius)], outline=(*theme["divider"], 220), width=3)
+                rendered_pfp = True
+        except Exception:
+            rendered_pfp = False
+
+    if not rendered_pfp:
+        draw.ellipse([(cx - 72, cy - 72), (cx + 72, cy + 72)], fill=(*theme["bg_bot"], 180), outline=(*theme["divider"], 180), width=2)
+        # Stylized footballer shoulders & head silhouette fallback
+        draw.ellipse([(cx - 24, cy - 48), (cx + 24, cy + 0)], fill=theme["accent"])
+        draw.chord([(cx - 50, cy + 2), (cx + 50, cy + 78)], start=180, end=360, fill=theme["accent"])
+        initials = "".join(ch for ch in str(card["player"])[:2]).upper() or "FC"
+        draw.text((cx, cy + 32), initials, font=_load_font(22, bold=True), fill=theme["bg_bot"], anchor="mm")
 
     # Tier badge at top-right inside shield
     draw.text((width - 102, 68), theme["tier_label"], font=font_tier, fill=theme["subtext"], anchor="mm")

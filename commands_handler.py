@@ -2430,3 +2430,63 @@ def register_commands(
 
         modal = EditSavedMatchModal(match_record=match_rec, excel_manager=excel_manager)
         await interaction.response.send_modal(modal)
+
+    # 18. /leaders
+    @tree.command(
+        name="leaders",
+        description="View the #1 leader(s) for each stat category at a glance.",
+    )
+    async def leaders(interaction: discord.Interaction) -> None:
+        err = check_guild_and_channel(interaction, config)
+        if err:
+            await interaction.response.send_message(f"❌ {err}", ephemeral=True)
+            return
+
+        await interaction.response.defer()
+
+        records = await excel_manager.get_leaderboard_from_sheet()
+        if not records:
+            await interaction.followup.send(
+                "📋 No match statistics have been recorded yet in Excel. Use `/add-match-image` or `/add-match-text` to record a match!",
+            )
+            return
+
+        categories = [
+            ("⚽", "Goals", "goals", "d"),
+            ("🅰️", "Assists", "assists", "d"),
+            ("🔥", "G/A", "ga", "d"),
+            ("🎯", "GPG", "gpg", ".2f"),
+            ("🎁", "APG", "apg", ".2f"),
+            ("⚡", "GAPG", "gapg", ".2f"),
+            ("🏆", "Wins", "wins", "d"),
+            ("📈", "Win Rate", "win_rate", ".1f%"),
+            ("🎩", "Hattricks", "hattricks", "d"),
+            ("🧤", "Clean Sheets", "clean_sheets", "d"),
+        ]
+
+        lines: List[str] = []
+        for emoji, label, key, fmt in categories:
+            top_val = max(r.get(key, 0) for r in records)
+            if top_val <= 0:
+                lines.append(f"{emoji} **{label}:** None yet")
+                continue
+
+            holders = [r["player"] for r in records if r.get(key, 0) == top_val]
+            holders_str = ", ".join(holders)
+            if fmt == ".1f%":
+                val_str = f"{float(top_val):.1f}%"
+            elif fmt == ".2f":
+                val_str = f"{float(top_val):.2f}"
+            else:
+                val_str = str(int(top_val))
+
+            lines.append(f"{emoji} **{label}:** **{holders_str}** — {val_str}")
+
+        embed = discord.Embed(
+            title="👑 Stat Leaders — Current #1s",
+            description="\n\n".join(lines),
+            color=discord.Color.gold(),
+            timestamp=datetime.now(),
+        )
+        embed.set_footer(text=f"Across {len(records)} registered players • Fetched from Excel")
+        await interaction.followup.send(embed=embed)

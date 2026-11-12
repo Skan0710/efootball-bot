@@ -73,6 +73,10 @@ logs/
 Thumbs.db
 desktop.ini
 
+# Player Avatars / PFPs (local assets)
+pfp/
+pfp/*
+
 # IDEs and editors
 .idea/
 .vscode/
