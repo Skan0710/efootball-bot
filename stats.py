@@ -585,6 +585,7 @@ def calculate_player_form(
         "player": canonical,
         "total_matches": len(appearances),
         "recent": recent,
+        "history": appearances[-10:],
         "form_list": [a["outcome"] for a in recent],
         "current_streak_type": current_streak_type,
         "current_streak_count": current_streak_count,

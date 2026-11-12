@@ -665,6 +665,8 @@ async def test_form_and_record_player_autocomplete(test_config: BotConfig) -> No
     assert "Recent Form — Suri" in embed.title
     assert "1 Win Streak" in embed.description
     assert "2G, 1A" in embed.description
+    assert isinstance(inter_form.followup.send.call_args[1]["file"], discord.File)
+    assert inter_form.followup.send.call_args[1]["file"].filename.endswith("_form_chart.png")
 
 
 @pytest.mark.asyncio
@@ -714,6 +716,8 @@ async def test_h2h_and_compare_commands(test_config: BotConfig) -> None:
     assert "Player Comparison — Suri vs Skan" in cmp_embed.title
     assert "Skill Rating" in cmp_embed.description
     assert "\n\n" in cmp_embed.description
+    assert isinstance(inter_cmp.response.send_message.call_args[1]["file"], discord.File)
+    assert inter_cmp.response.send_message.call_args[1]["file"].filename == "player_compare_chart.png"
 
 
 @pytest.mark.asyncio

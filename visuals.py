@@ -243,3 +243,192 @@ def render_fc27_card(card: dict) -> io.BytesIO:
     canvas.save(out, format="PNG")
     out.seek(0)
     return out
+
+
+def render_form_chart(player_name: str, history: List[dict]) -> io.BytesIO:
+    """Renders a dark-themed PNG bar+trend chart of a player's chronological recent matches."""
+    width, height = 780, 400
+    bg = (18, 22, 36)
+    panel = (26, 32, 50)
+    grid_col = (48, 58, 84)
+    text_col = (240, 244, 252)
+    muted_col = (160, 172, 198)
+    goal_col = (56, 189, 248)    # cyan-blue
+    assist_col = (250, 204, 21)  # gold
+    ga_line_col = (167, 139, 250)  # violet
+
+    img = Image.new("RGB", (width, height), bg)
+    draw = ImageDraw.Draw(img)
+
+    font_title = _load_font(22, bold=True)
+    font_sub = _load_font(14, bold=False)
+    font_lbl = _load_font(13, bold=True)
+    font_val = _load_font(12, bold=True)
+
+    # Outer card panel
+    draw.rounded_rectangle([(14, 14), (width - 14, height - 14)], radius=16, fill=panel, outline=grid_col, width=2)
+
+    items = history[-10:]
+    draw.text((34, 34), f"RECENT FORM CHART — {player_name.upper()}", font=font_title, fill=text_col, anchor="lm")
+    draw.text((34, 60), f"Chronological last {len(items)} match(es) • Oldest → Latest", font=font_sub, fill=muted_col, anchor="lm")
+
+    # Legend (top-right)
+    legend = [("Goals", goal_col), ("Assists", assist_col), ("Total G+A", ga_line_col)]
+    lx = width - 315
+    for label, col in legend:
+        draw.rectangle([(lx, 42), (lx + 12, 54)], fill=col)
+        draw.text((lx + 18, 48), label, font=font_lbl, fill=text_col, anchor="lm")
+        lx += 98
+
+    # Plot box
+    left, top, right, bottom = 68, 92, width - 36, height - 66
+    max_y = max([max(a["goals"] + a["assists"], 3) for a in items], default=3)
+
+    # Horizontal gridlines
+    steps = min(max_y, 6)
+    for i in range(steps + 1):
+        val = round((max_y * i) / max(steps, 1))
+        y = bottom - int(((bottom - top) * i) / max(steps, 1))
+        draw.line([(left, y), (right, y)], fill=grid_col, width=1)
+        draw.text((left - 10, y), str(val), font=font_val, fill=muted_col, anchor="rm")
+
+    draw.line([(left, top), (left, bottom)], fill=muted_col, width=2)
+    draw.line([(left, bottom), (right, bottom)], fill=muted_col, width=2)
+
+    n = max(len(items), 1)
+    slot_w = (right - left) / n
+    bar_w = max(10, min(26, int(slot_w * 0.28)))
+
+    outcome_colors = {
+        "W": (34, 197, 94),
+        "L": (239, 68, 68),
+        "D": (148, 163, 184),
+    }
+
+    line_pts: List[Tuple[int, int]] = []
+    for idx, app in enumerate(items):
+        cx = int(left + slot_w * (idx + 0.5))
+        g = int(app["goals"])
+        a = int(app["assists"])
+        ga = g + a
+
+        g_h = int((g / max_y) * (bottom - top)) if max_y > 0 else 0
+        a_h = int((a / max_y) * (bottom - top)) if max_y > 0 else 0
+        ga_y = bottom - (int((ga / max_y) * (bottom - top)) if max_y > 0 else 0)
+        line_pts.append((cx, ga_y))
+
+        # Goals bar (left of center)
+        if g_h > 0:
+            draw.rounded_rectangle(
+                [(cx - bar_w - 2, bottom - g_h), (cx - 2, bottom)],
+                radius=4,
+                fill=goal_col,
+            )
+            draw.text((cx - bar_w // 2 - 2, bottom - g_h - 10), str(g), font=font_val, fill=goal_col, anchor="mm")
+
+        # Assists bar (right of center)
+        if a_h > 0:
+            draw.rounded_rectangle(
+                [(cx + 2, bottom - a_h), (cx + bar_w + 2, bottom)],
+                radius=4,
+                fill=assist_col,
+            )
+            draw.text((cx + bar_w // 2 + 2, bottom - a_h - 10), str(a), font=font_val, fill=assist_col, anchor="mm")
+
+        # Outcome pill badge below X-axis
+        out_ch = str(app.get("outcome", "W"))
+        pill_col = outcome_colors.get(out_ch, muted_col)
+        draw.rounded_rectangle([(cx - 14, bottom + 10), (cx + 14, bottom + 32)], radius=6, fill=pill_col)
+        draw.text((cx, bottom + 21), out_ch, font=font_lbl, fill=(15, 23, 42), anchor="mm")
+        draw.text((cx, bottom + 43), f"M{idx + 1}", font=font_val, fill=muted_col, anchor="mm")
+
+    if len(line_pts) >= 2:
+        draw.line(line_pts, fill=ga_line_col, width=3)
+    for pt in line_pts:
+        draw.ellipse([(pt[0] - 5, pt[1] - 5), (pt[0] + 5, pt[1] + 5)], fill=ga_line_col, outline=bg, width=2)
+
+    out = io.BytesIO()
+    img.save(out, format="PNG")
+    out.seek(0)
+    return out
+
+
+def render_compare_chart(
+    r1: dict,
+    rating1: float,
+    r2: dict,
+    rating2: float,
+) -> io.BytesIO:
+    """Renders a dark-themed head-to-head comparison bar chart for two players."""
+    metrics = [
+        ("Goals", float(r1["goals"]), float(r2["goals"]), False),
+        ("Assists", float(r1["assists"]), float(r2["assists"]), False),
+        ("G/A", float(r1["ga"]), float(r2["ga"]), False),
+        ("Wins", float(r1["wins"]), float(r2["wins"]), False),
+        ("Win Rate %", float(r1["win_rate"]), float(r2["win_rate"]), True),
+        ("GPG", float(r1["gpg"]), float(r2["gpg"]), True),
+        ("GAPG", float(r1["gapg"]), float(r2["gapg"]), True),
+        ("Rating", float(rating1), float(rating2), True),
+    ]
+
+    width, height = 780, 470
+    bg = (18, 22, 36)
+    panel = (26, 32, 50)
+    grid_col = (48, 58, 84)
+    text_col = (240, 244, 252)
+    muted_col = (160, 172, 198)
+    p1_col = (59, 130, 246)   # vibrant blue
+    p2_col = (245, 158, 11)   # vibrant amber
+
+    img = Image.new("RGB", (width, height), bg)
+    draw = ImageDraw.Draw(img)
+
+    font_title = _load_font(22, bold=True)
+    font_hdr = _load_font(16, bold=True)
+    font_lbl = _load_font(14, bold=True)
+    font_val = _load_font(14, bold=True)
+
+    draw.rounded_rectangle([(14, 14), (width - 14, height - 14)], radius=16, fill=panel, outline=grid_col, width=2)
+    p1_name = str(r1["player"])
+    p2_name = str(r2["player"])
+    draw.text((width // 2, 40), f"{p1_name.upper()}  vs  {p2_name.upper()}", font=font_title, fill=text_col, anchor="mm")
+
+    # Legend centered under title
+    draw.rectangle([(width // 2 - 170, 62), (width // 2 - 154, 76)], fill=p1_col)
+    draw.text((width // 2 - 146, 69), p1_name, font=font_hdr, fill=p1_col, anchor="lm")
+    draw.rectangle([(width // 2 + 30, 62), (width // 2 + 46, 76)], fill=p2_col)
+    draw.text((width // 2 + 54, 69), p2_name, font=font_hdr, fill=p2_col, anchor="lm")
+
+    center_x = width // 2
+    max_bar_w = 240
+    start_y = 108
+    row_h = 42
+
+    for idx, (label, v1, v2, is_float) in enumerate(metrics):
+        y = start_y + idx * row_h
+        max_v = max(v1, v2, 1.0)
+        w1 = int((v1 / max_v) * max_bar_w) if v1 > 0 else 4
+        w2 = int((v2 / max_v) * max_bar_w) if v2 > 0 else 4
+
+        # Center label pill
+        draw.rounded_rectangle([(center_x - 56, y - 13), (center_x + 56, y + 13)], radius=6, fill=(36, 44, 68))
+        draw.text((center_x, y), label, font=font_lbl, fill=text_col, anchor="mm")
+
+        # Left bar (Player 1 extends leftwards)
+        bar_l_end = center_x - 66
+        draw.rounded_rectangle([(bar_l_end - max_bar_w, y - 9), (bar_l_end, y + 9)], radius=5, fill=(34, 41, 62))
+        draw.rounded_rectangle([(bar_l_end - w1, y - 9), (bar_l_end, y + 9)], radius=5, fill=p1_col)
+        s1 = f"{v1:.1f}" if label in ("Win Rate %", "Rating") else (f"{v1:.2f}" if is_float else f"{int(v1)}")
+        draw.text((bar_l_end - max_bar_w - 10, y), s1, font=font_val, fill=p1_col if v1 >= v2 else muted_col, anchor="rm")
+
+        # Right bar (Player 2 extends rightwards)
+        bar_r_start = center_x + 66
+        draw.rounded_rectangle([(bar_r_start, y - 9), (bar_r_start + max_bar_w, y + 9)], radius=5, fill=(34, 41, 62))
+        draw.rounded_rectangle([(bar_r_start, y - 9), (bar_r_start + w2, y + 9)], radius=5, fill=p2_col)
+        s2 = f"{v2:.1f}" if label in ("Win Rate %", "Rating") else (f"{v2:.2f}" if is_float else f"{int(v2)}")
+        draw.text((bar_r_start + max_bar_w + 10, y), s2, font=font_val, fill=p2_col if v2 >= v1 else muted_col, anchor="lm")
+
+    out = io.BytesIO()
+    img.save(out, format="PNG")
+    out.seek(0)
+    return out

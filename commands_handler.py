@@ -44,7 +44,7 @@ from stats import (
     get_leaderboard,
     get_player_record,
 )
-from visuals import render_fc27_card
+from visuals import render_compare_chart, render_fc27_card, render_form_chart
 
 LOGGER = logging.getLogger("efootball_bot.commands")
 
@@ -1933,8 +1933,13 @@ def register_commands(
             color=discord.Color.blue(),
             timestamp=datetime.now(),
         )
+        chart_buf = render_form_chart(form_data["player"], form_data["history"])
+        slug = re.sub(r"[^a-zA-Z0-9_-]", "", form_data["player"].lower()) or "player"
+        chart_name = f"{slug}_form_chart.png"
+        chart_file = discord.File(fp=chart_buf, filename=chart_name)
+        embed.set_image(url=f"attachment://{chart_name}")
         embed.set_footer(text=f"Total matches played: {form_data['total_matches']}")
-        await interaction.followup.send(embed=embed)
+        await interaction.followup.send(embed=embed, file=chart_file)
 
     # 12. /h2h
     @tree.command(
@@ -2069,8 +2074,12 @@ def register_commands(
             color=discord.Color.teal(),
             timestamp=datetime.now(),
         )
+        chart_buf = render_compare_chart(r1, rating1, r2, rating2)
+        chart_name = "player_compare_chart.png"
+        chart_file = discord.File(fp=chart_buf, filename=chart_name)
+        embed.set_image(url=f"attachment://{chart_name}")
         embed.set_footer(text="◀️ / ▶️ highlights the leader in each stat • Fetched from Excel")
-        await interaction.response.send_message(embed=embed)
+        await interaction.response.send_message(embed=embed, file=chart_file)
 
     # 14. /hall-of-fame
     @tree.command(
