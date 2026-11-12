@@ -55,6 +55,7 @@ def test_command_registration_names(test_config: BotConfig, tmp_path: Path) -> N
         "h2h",
         "compare",
         "hall-of-fame",
+        "card",
     }
     assert registered_names == expected_commands
 
@@ -806,6 +807,43 @@ async def test_clean_sheets_leaderboard_and_motm_on_save(test_config: BotConfig)
     lb_embed = inter_lb.followup.send.call_args[1]["embed"]
     assert "Clean Sheets" in lb_embed.title
     assert "**Lilly** — **1** clean sheet" in lb_embed.description
+
+
+@pytest.mark.asyncio
+async def test_card_command(test_config: BotConfig) -> None:
+    """Verifies /card generates an FC 27 card image attachment and stat summary."""
+    bot = EFootballBot(test_config)
+    await bot.excel_manager.save_match(
+        MatchRecord(
+            match_id="M-CARD-CMD",
+            date="2026-11-12 10:00:00",
+            result=MatchResult.HOME_WIN,
+            submitted_by="Skan",
+            notes="Score: Home 3 - 1 Away (Home Win)",
+            player_stats=[
+                PlayerStat(player="Suri", goals=2, assists=1, result=MatchResult.WIN),
+                PlayerStat(player="Skan", goals=1, assists=2, result=MatchResult.WIN),
+            ],
+        )
+    )
+
+    card_cmd = bot.tree.get_command("card")
+    assert card_cmd is not None
+
+    inter = MagicMock(spec=discord.Interaction)
+    inter.guild_id = test_config.guild_id
+    inter.channel_id = test_config.allowed_channel_id
+    inter.response = MagicMock()
+    inter.response.defer = AsyncMock()
+    inter.followup = MagicMock()
+    inter.followup.send = AsyncMock()
+
+    await card_cmd.callback(inter, "Suri")
+    inter.followup.send.assert_called_once()
+    kwargs = inter.followup.send.call_args[1]
+    assert "FC 27 Player Card — Suri" in kwargs["embed"].title
+    assert isinstance(kwargs["file"], discord.File)
+    assert kwargs["file"].filename.endswith("_fc27_card.png")
 
 
 

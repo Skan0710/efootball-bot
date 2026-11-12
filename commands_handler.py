@@ -34,6 +34,7 @@ from stats import (
     calculate_head_to_head,
     calculate_match_motm_and_milestones,
     calculate_player_aggregates,
+    calculate_player_card_stats,
     calculate_player_form,
     calculate_potm_rankings,
     calculate_potw_rankings,
@@ -43,6 +44,7 @@ from stats import (
     get_leaderboard,
     get_player_record,
 )
+from visuals import render_fc27_card
 
 LOGGER = logging.getLogger("efootball_bot.commands")
 
@@ -2135,3 +2137,46 @@ def register_commands(
         )
         embed.set_footer(text=f"Computed across {hof['total_matches']} all-time matches")
         await interaction.followup.send(embed=embed)
+
+    # 15. /card
+    @tree.command(
+        name="card",
+        description="Generate an FC 27-style Ultimate Team player card image from career stats.",
+    )
+    @app_commands.describe(player="Select player from list")
+    @app_commands.autocomplete(player=player_autocomplete)
+    async def card(interaction: discord.Interaction, player: str) -> None:
+        err = check_guild_and_channel(interaction, config)
+        if err:
+            await interaction.response.send_message(f"❌ {err}", ephemeral=True)
+            return
+
+        await interaction.response.defer()
+
+        records = await excel_manager.get_leaderboard_from_sheet()
+        all_matches = await excel_manager.get_all_matches()
+        card_stats = calculate_player_card_stats(player, records, all_matches)
+
+        if not card_stats:
+            await interaction.followup.send(
+                f"❌ Player **{player}** was not found in Excel leaderboard. Use `/teammates` to see registered players.",
+            )
+            return
+
+        png_buf = render_fc27_card(card_stats)
+        safe_slug = re.sub(r"[^a-zA-Z0-9_-]", "", card_stats["player"].lower()) or "player"
+        filename = f"{safe_slug}_fc27_card.png"
+        file = discord.File(fp=png_buf, filename=filename)
+
+        embed = discord.Embed(
+            title=f"🃏 FC 27 Player Card — {card_stats['player']} ({card_stats['rating']} OVR)",
+            description=(
+                f"**PAC:** {card_stats['pace']} · **SHO:** {card_stats['shooting']} · **PAS:** {card_stats['passing']} · "
+                f"**DRI:** {card_stats['dribbling']} · **DEF:** {card_stats['defending']} · **PHY:** {card_stats['physical']}"
+            ),
+            color=discord.Color.gold(),
+            timestamp=datetime.now(),
+        )
+        embed.set_image(url=f"attachment://{filename}")
+        embed.set_footer(text="PAC=OVR · SHO=Goals · PAS=Assists · DRI=GAPG · DEF=Conceded · PHY=Avg(OVR,PAC,DRI)")
+        await interaction.followup.send(embed=embed, file=file)

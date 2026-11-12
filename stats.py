@@ -896,3 +896,78 @@ def calculate_match_motm_and_milestones(
         "motm": motm,
         "milestones": milestones,
     }
+
+
+def calculate_player_card_stats(
+    player_name: str,
+    leaderboard_records: List[dict],
+    matches: List[MatchRecord],
+) -> Optional[dict]:
+    """Computes FC 27-style card OVR and 6 face attributes (PAC/SHO/PAS/DRI/DEF/PHY)."""
+    canonical = canonicalize_player_name(player_name)
+    key = canonical.strip().lower()
+    record = next(
+        (
+            r
+            for r in leaderboard_records
+            if canonicalize_player_name(str(r.get("player", ""))).lower() == key
+            or str(r.get("player", "")).strip().lower() == player_name.strip().lower()
+        ),
+        None,
+    )
+    if not record:
+        return None
+
+    mp = int(record.get("matches_played", 0))
+    goals = int(record.get("goals", 0))
+    assists = int(record.get("assists", 0))
+    gpg = float(record.get("gpg", 0.0))
+    apg = float(record.get("apg", 0.0))
+    gapg = float(record.get("gapg", 0.0))
+    win_rate = float(record.get("win_rate", 0.0))
+    clean_sheets = int(record.get("clean_sheets", 0))
+
+    raw_rating = compute_player_rating(record)
+    rating = int(max(50, min(99, round(50.0 + 0.45 * raw_rating)))) if mp > 0 else 50
+    pace = rating
+
+    shooting = int(max(45, min(99, round(48.0 + goals * 1.4 + gpg * 8.0))))
+    passing = int(max(45, min(99, round(48.0 + assists * 1.8 + apg * 10.0))))
+    dribbling = int(max(45, min(99, round(46.0 + gapg * 16.0))))
+
+    cs_map = calculate_player_conceded_and_clean_sheets(matches)
+    c_entry = cs_map.get(canonical.lower(), {})
+    goals_conceded = int(c_entry.get("goals_conceded", 0))
+    c_matches = int(c_entry.get("matches", 0)) or max(mp, 1)
+    gc_per_game = goals_conceded / c_matches
+    defending = int(max(40, min(99, round(90.0 - gc_per_game * 12.0 + clean_sheets * 2.0))))
+
+    physical = int(round((rating + pace + dribbling) / 3.0))
+
+    if gpg >= apg * 1.4 and gpg >= 0.8:
+        position = "ST"
+    elif apg > gpg * 1.2:
+        position = "CAM"
+    elif defending >= 75 and gapg < 1.5:
+        position = "CDM"
+    else:
+        position = "CF"
+
+    return {
+        "player": record["player"],
+        "position": position,
+        "rating": rating,
+        "pace": pace,
+        "shooting": shooting,
+        "passing": passing,
+        "dribbling": dribbling,
+        "defending": defending,
+        "physical": physical,
+        "matches_played": mp,
+        "goals": goals,
+        "assists": assists,
+        "gapg": gapg,
+        "win_rate": win_rate,
+        "goals_conceded": goals_conceded,
+        "clean_sheets": clean_sheets,
+    }

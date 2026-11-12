@@ -11,6 +11,7 @@ from stats import (
     calculate_head_to_head,
     calculate_match_motm_and_milestones,
     calculate_player_aggregates,
+    calculate_player_card_stats,
     calculate_player_form,
     calculate_potm_rankings,
     calculate_potw_rankings,
@@ -766,6 +767,72 @@ def test_clean_sheets_and_motm_milestones() -> None:
     assert "Hattrick" in joined_1
     assert "Playmaker" in joined_1
     assert "Clean Sheet" in joined_1
+
+
+def test_player_card_stats_and_image_render() -> None:
+    """Verifies FC 27 card stat formulas and PNG card rendering."""
+    from visuals import render_fc27_card
+
+    matches = [
+        MatchRecord(
+            match_id="M-CARD-1",
+            date="2026-11-11 10:00:00",
+            result=MatchResult.HOME_WIN,
+            submitted_by="Skan",
+            notes="Score: Home 4 - 0 Away (Home Win)",
+            player_stats=[
+                PlayerStat(player="Suri", goals=3, assists=1, result=MatchResult.WIN),
+                PlayerStat(player="Skan", goals=1, assists=2, result=MatchResult.WIN),
+                PlayerStat(player="Lilly", goals=0, assists=0, result=MatchResult.LOSS),
+            ],
+        )
+    ]
+    lb = [
+        {
+            "player": "Suri",
+            "matches_played": 1,
+            "goals": 3,
+            "assists": 1,
+            "ga": 4,
+            "wins": 1,
+            "losses": 0,
+            "win_rate": 100.0,
+            "gpg": 3.0,
+            "apg": 1.0,
+            "gapg": 4.0,
+            "clean_sheets": 1,
+        },
+        {
+            "player": "Lilly",
+            "matches_played": 1,
+            "goals": 0,
+            "assists": 0,
+            "ga": 0,
+            "wins": 0,
+            "losses": 1,
+            "win_rate": 0.0,
+            "gpg": 0.0,
+            "apg": 0.0,
+            "gapg": 0.0,
+            "clean_sheets": 0,
+        },
+    ]
+
+    suri_card = calculate_player_card_stats("Suri", lb, matches)
+    lilly_card = calculate_player_card_stats("Lilly", lb, matches)
+    assert suri_card is not None and lilly_card is not None
+
+    assert suri_card["pace"] == suri_card["rating"]
+    assert suri_card["physical"] == int(round((suri_card["rating"] + suri_card["pace"] + suri_card["dribbling"]) / 3.0))
+    assert suri_card["shooting"] > lilly_card["shooting"]
+    assert suri_card["passing"] > lilly_card["passing"]
+    assert suri_card["dribbling"] > lilly_card["dribbling"]
+    assert suri_card["defending"] > lilly_card["defending"]
+
+    png_buf = render_fc27_card(suri_card)
+    data = png_buf.getvalue()
+    assert data[:8] == b"\x89PNG\r\n\x1a\n"
+    assert len(data) > 5000
 
 
 
