@@ -929,21 +929,21 @@ def calculate_player_card_stats(
     clean_sheets = int(record.get("clean_sheets", 0))
 
     raw_rating = compute_player_rating(record)
-    rating = int(max(50, min(99, round(50.0 + 0.45 * raw_rating)))) if mp > 0 else 50
-    pace = rating
+    rating = int(max(60, min(99, round(60.0 + 0.38 * raw_rating)))) if mp > 0 else 60
+    pace = int(max(71, min(99, round(71.0 + (rating - 60) * (28.0 / 39.0)))))
 
-    shooting = int(max(45, min(99, round(48.0 + goals * 1.4 + gpg * 8.0))))
-    passing = int(max(45, min(99, round(48.0 + assists * 1.8 + apg * 10.0))))
-    dribbling = int(max(45, min(99, round(46.0 + gapg * 16.0))))
+    shooting = int(max(60, min(99, round(60.0 + goals * 1.1 + gpg * 6.0))))
+    passing = int(max(60, min(99, round(60.0 + assists * 1.4 + apg * 8.0))))
+    dribbling = int(max(60, min(99, round(60.0 + gapg * 11.5))))
 
     cs_map = calculate_player_conceded_and_clean_sheets(matches)
     c_entry = cs_map.get(canonical.lower(), {})
     goals_conceded = int(c_entry.get("goals_conceded", 0))
     c_matches = int(c_entry.get("matches", 0)) or max(mp, 1)
     gc_per_game = goals_conceded / c_matches
-    defending = int(max(40, min(99, round(90.0 - gc_per_game * 12.0 + clean_sheets * 2.0))))
+    defending = int(max(60, min(99, round(92.0 - gc_per_game * 8.0 + clean_sheets * 2.0))))
 
-    physical = int(round((rating + pace + dribbling) / 3.0))
+    physical = int(max(60, min(99, round((rating + pace + dribbling) / 3.0))))
 
     if gpg >= apg * 1.4 and gpg >= 0.8:
         position = "ST"

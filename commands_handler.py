@@ -2317,7 +2317,7 @@ def register_commands(
             timestamp=datetime.now(),
         )
         embed.set_image(url=f"attachment://{filename}")
-        embed.set_footer(text="PAC=OVR · SHO=Goals · PAS=Assists · DRI=GAPG · DEF=Conceded · PHY=Avg(OVR,PAC,DRI)")
+        embed.set_footer(text="OVR=60–99 · PAC=71–99 · SHO=Goals · PAS=Assists · DRI=GAPG · DEF=Conceded · PHY=Avg(OVR,PAC,DRI)")
         await interaction.followup.send(embed=embed, file=file)
 
     # 16. /chemistry

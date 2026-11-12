@@ -823,7 +823,11 @@ def test_player_card_stats_and_image_render() -> None:
     lilly_card = calculate_player_card_stats("Lilly", lb, matches)
     assert suri_card is not None and lilly_card is not None
 
-    assert suri_card["pace"] == suri_card["rating"]
+    for card in (suri_card, lilly_card):
+        for stat_key in ("rating", "shooting", "passing", "dribbling", "defending", "physical"):
+            assert 60 <= card[stat_key] <= 99
+        assert 71 <= card["pace"] <= 99
+
     assert suri_card["physical"] == int(round((suri_card["rating"] + suri_card["pace"] + suri_card["dribbling"]) / 3.0))
     assert suri_card["shooting"] > lilly_card["shooting"]
     assert suri_card["passing"] > lilly_card["passing"]
