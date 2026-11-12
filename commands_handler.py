@@ -32,6 +32,7 @@ from stats import (
     calculate_best_teams,
     calculate_hall_of_fame,
     calculate_head_to_head,
+    calculate_match_motm_and_milestones,
     calculate_player_aggregates,
     calculate_player_form,
     calculate_potm_rankings,
@@ -570,8 +571,11 @@ class MatchPreviewView(discord.ui.View):
 
             # Recalculate aggregates and update Leaderboard sheet in workbook
             all_stats = await self.excel_manager.get_all_player_stats()
-            aggregates = calculate_player_aggregates(all_stats)
+            all_matches = await self.excel_manager.get_all_matches()
+            aggregates = calculate_player_aggregates(all_stats, matches=all_matches)
             await self.excel_manager.update_leaderboard_sheet(list(aggregates.values()))
+
+            highlights = calculate_match_motm_and_milestones(record, all_matches)
 
             # Disable buttons
             for child in self.children:
@@ -593,9 +597,50 @@ class MatchPreviewView(discord.ui.View):
                     value=f"Goals: **{ps.goals}** | Assists: **{ps.assists}**",
                     inline=True,
                 )
+
+            motm = highlights.get("motm")
+            milestones = highlights.get("milestones", [])
+            if motm:
+                success_embed.add_field(
+                    name="⭐ Man of the Match",
+                    value=f"**{motm['player']}** ({motm['goals']}G, {motm['assists']}A • Rating Score: {motm['score']})",
+                    inline=False,
+                )
+            if milestones:
+                success_embed.add_field(
+                    name="🏆 Milestones & Highlights",
+                    value="\n".join(milestones),
+                    inline=False,
+                )
+
             success_embed.set_footer(text="Saved to data/matches.xlsx. Use /leaderboard or /record to view updated stats.")
 
             await interaction.edit_original_response(embed=success_embed, view=self)
+
+            # Announce MOTM & Milestones publicly in the channel if available
+            if (motm or milestones) and isinstance(getattr(interaction, "channel", None), discord.abc.Messageable):
+                try:
+                    announce_embed = discord.Embed(
+                        title=f"📣 Post-Match Honors — {format_match_scoreline(record)}",
+                        color=discord.Color.gold(),
+                        timestamp=datetime.now(),
+                    )
+                    if motm:
+                        announce_embed.add_field(
+                            name="⭐ Man of the Match",
+                            value=f"👑 **{motm['player']}** — **{motm['goals']}G, {motm['assists']}A**",
+                            inline=False,
+                        )
+                    if milestones:
+                        announce_embed.add_field(
+                            name="🏆 Milestones Unlocked",
+                            value="\n".join(milestones),
+                            inline=False,
+                        )
+                    await interaction.channel.send(embed=announce_embed)
+                except Exception as pub_exc:
+                    LOGGER.debug("Skipping public MOTM announcement: %s", pub_exc)
+
             LOGGER.info("Match %s saved by user %s (%s)", match_id, interaction.user.name, interaction.user.id)
         except PermissionError:
             LOGGER.warning("Excel workbook locked during match save: %s", match_id)
@@ -1398,6 +1443,7 @@ def register_commands(
             app_commands.Choice(name="APG (Assists Per Game)", value=LeaderboardCategory.APG.value),
             app_commands.Choice(name="GAPG (G/A Per Game)", value=LeaderboardCategory.GAPG.value),
             app_commands.Choice(name="Hattrick (3+ goals in a game)", value=LeaderboardCategory.HATTRICK.value),
+            app_commands.Choice(name="Clean Sheets (0 goals conceded)", value=LeaderboardCategory.CLEAN_SHEETS.value),
         ]
     )
     async def leaderboard(
@@ -1445,6 +1491,11 @@ def register_commands(
             records.sort(key=lambda r: (r["gapg"], r["ga"], r["matches_played"]), reverse=True)
         elif cat_enum == LeaderboardCategory.HATTRICK:
             records.sort(key=lambda r: (r.get("hattricks", 0), r["goals"], r["matches_played"]), reverse=True)
+        elif cat_enum == LeaderboardCategory.CLEAN_SHEETS:
+            records.sort(
+                key=lambda r: (r.get("clean_sheets", 0), r["wins"], r["win_rate"], r["matches_played"]),
+                reverse=True,
+            )
         else:
             records.sort(key=lambda r: (r["goals"], r["assists"]), reverse=True)
 
@@ -1484,6 +1535,9 @@ def register_commands(
             elif cat_enum == LeaderboardCategory.HATTRICK:
                 ht = r.get("hattricks", 0)
                 stat_str = f"**{ht}** {'hattrick' if ht == 1 else 'hattricks'}"
+            elif cat_enum == LeaderboardCategory.CLEAN_SHEETS:
+                cs = r.get("clean_sheets", 0)
+                stat_str = f"**{cs}** {'clean sheet' if cs == 1 else 'clean sheets'}"
             else:
                 stat_str = f"**{r['goals']}** goals"
 
@@ -1530,6 +1584,7 @@ def register_commands(
         embed.add_field(name="Assists", value=str(p_record["assists"]), inline=True)
         embed.add_field(name="G/A (Goals + Assists)", value=str(p_record["ga"]), inline=True)
         embed.add_field(name="Hattricks (3+ Goals)", value=str(p_record.get("hattricks", 0)), inline=True)
+        embed.add_field(name="Clean Sheets", value=str(p_record.get("clean_sheets", 0)), inline=True)
         embed.add_field(name="Goals Per Game (GPG)", value=f"{p_record['gpg']:.2f}", inline=True)
         embed.add_field(name="Assists Per Game (APG)", value=f"{p_record['apg']:.2f}", inline=True)
         embed.add_field(name="G/A Per Game (GAPG)", value=f"{p_record['gapg']:.2f}", inline=True)

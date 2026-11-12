@@ -126,10 +126,13 @@ class LeaderboardCategory(str, Enum):
     APG = "APG"
     GAPG = "GAPG"
     HATTRICK = "Hattrick"
+    CLEAN_SHEETS = "Clean Sheets"
 
     @classmethod
     def from_str(cls, value: str) -> LeaderboardCategory:
         norm = value.strip().lower()
+        if "clean sheet" in norm or "cleansheet" in norm or norm in ("cs", "clean"):
+            return cls.CLEAN_SHEETS
         if "hattrick" in norm or "hat-trick" in norm or "hat trick" in norm:
             return cls.HATTRICK
         if "gapg" in norm or "g/a per" in norm or "ga per" in norm:
@@ -224,6 +227,7 @@ class PlayerAggregateRecord:
     apg: float = 0.0
     gapg: float = 0.0
     hattricks: int = 0
+    clean_sheets: int = 0
 
     @classmethod
     def compute(
@@ -236,6 +240,7 @@ class PlayerAggregateRecord:
         losses: int,
         draws: int,
         hattricks: int = 0,
+        clean_sheets: int = 0,
     ) -> PlayerAggregateRecord:
         """Computes win, loss, and draw rates safely avoiding division by zero."""
         ga = goals + assists
@@ -270,6 +275,7 @@ class PlayerAggregateRecord:
             apg=apg,
             gapg=gapg,
             hattricks=hattricks,
+            clean_sheets=clean_sheets,
         )
 
 

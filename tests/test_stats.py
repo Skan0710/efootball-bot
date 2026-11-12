@@ -9,6 +9,7 @@ from stats import (
     calculate_best_teams,
     calculate_hall_of_fame,
     calculate_head_to_head,
+    calculate_match_motm_and_milestones,
     calculate_player_aggregates,
     calculate_player_form,
     calculate_potm_rankings,
@@ -719,6 +720,52 @@ def test_calculate_hall_of_fame() -> None:
     assert len(hof["clean_sheets"]) == 1
     assert hof["hattrick_king"].player == "Suri"
     assert hof["hattrick_king"].hattricks == 2
+
+
+def test_clean_sheets_and_motm_milestones() -> None:
+    """Verifies Clean Sheets ranking and auto MOTM + Milestones detection."""
+    m1 = MatchRecord(
+        match_id="M-MM-1",
+        date="2026-11-11 10:00:00",
+        result=MatchResult.HOME_WIN,
+        submitted_by="Skan",
+        notes="Score: Home 3 - 0 Away (Home Win)",
+        player_stats=[
+            PlayerStat(player="Lilly", goals=3, assists=0, result=MatchResult.WIN),
+            PlayerStat(player="Azlan", goals=0, assists=3, result=MatchResult.WIN),
+            PlayerStat(player="Skan", goals=0, assists=0, result=MatchResult.LOSS),
+            PlayerStat(player="Suri", goals=0, assists=0, result=MatchResult.LOSS),
+        ],
+    )
+    m2 = MatchRecord(
+        match_id="M-MM-2",
+        date="2026-11-12 10:00:00",
+        result=MatchResult.HOME_WIN,
+        submitted_by="Skan",
+        notes="Score: Home 3 - 2 Away (Home Win)",
+        player_stats=[
+            PlayerStat(player="Lilly", goals=3, assists=0, result=MatchResult.WIN),
+            PlayerStat(player="Azlan", goals=0, assists=3, result=MatchResult.WIN),
+            PlayerStat(player="Skan", goals=0, assists=1, result=MatchResult.LOSS),
+            PlayerStat(player="Suri", goals=2, assists=0, result=MatchResult.LOSS),
+        ],
+    )
+    all_matches = [m1, m2]
+    all_stats = [ps for m in all_matches for ps in m.player_stats]
+    aggs = calculate_player_aggregates(all_stats, matches=all_matches)
+    assert aggs["lilly"].clean_sheets == 1
+    assert aggs["azlan"].clean_sheets == 1
+    assert aggs["skan"].clean_sheets == 0
+
+    ranked_cs = get_leaderboard(aggs, LeaderboardCategory.CLEAN_SHEETS)
+    assert ranked_cs[0].clean_sheets == 1
+
+    highlights_1 = calculate_match_motm_and_milestones(m1, [m1])
+    assert highlights_1["motm"]["player"] == "Lilly"
+    joined_1 = "\n".join(highlights_1["milestones"])
+    assert "Hattrick" in joined_1
+    assert "Playmaker" in joined_1
+    assert "Clean Sheet" in joined_1
 
 
 

@@ -755,6 +755,59 @@ async def test_hall_of_fame_command(test_config: BotConfig) -> None:
     assert "\n\n" in embed.description
 
 
+@pytest.mark.asyncio
+async def test_clean_sheets_leaderboard_and_motm_on_save(test_config: BotConfig) -> None:
+    """Verifies Clean Sheets category in /leaderboard and MOTM/Milestone fields on save."""
+    bot = EFootballBot(test_config)
+    candidates = [
+        OCRPlayerCandidate(player="Lilly", goals=3, assists=0),
+        OCRPlayerCandidate(player="Azlan", goals=0, assists=3),
+    ]
+    away_candidates = [
+        OCRPlayerCandidate(player="Skan", goals=0, assists=0),
+        OCRPlayerCandidate(player="Suri", goals=0, assists=0),
+    ]
+
+    view = MatchPreviewView(
+        submitting_user_id=1001,
+        candidates=candidates,
+        result=MatchResult.HOME_WIN,
+        excel_manager=bot.excel_manager,
+        image_hash="hash_cs_motm",
+        home_score=3,
+        away_score=0,
+        away_candidates=away_candidates,
+    )
+    inter_save = MagicMock(spec=discord.Interaction)
+    inter_save.user.id = 1001
+    inter_save.user.display_name = "Skan"
+    inter_save.user.name = "Skan"
+    inter_save.channel = None
+    inter_save.response.defer = AsyncMock()
+    inter_save.edit_original_response = AsyncMock()
+
+    await view.confirm_button.callback(inter_save)
+    saved_embed = inter_save.edit_original_response.call_args[1]["embed"]
+    field_names = [f.name for f in saved_embed.fields]
+    assert "⭐ Man of the Match" in field_names
+    assert "🏆 Milestones & Highlights" in field_names
+
+    lb_cmd = bot.tree.get_command("leaderboard")
+    inter_lb = MagicMock(spec=discord.Interaction)
+    inter_lb.guild_id = test_config.guild_id
+    inter_lb.channel_id = test_config.allowed_channel_id
+    inter_lb.response = MagicMock()
+    inter_lb.response.defer = AsyncMock()
+    inter_lb.followup = MagicMock()
+    inter_lb.followup.send = AsyncMock()
+
+    choice = app_commands.Choice(name="Clean Sheets (0 goals conceded)", value="Clean Sheets")
+    await lb_cmd.callback(inter_lb, choice)
+    lb_embed = inter_lb.followup.send.call_args[1]["embed"]
+    assert "Clean Sheets" in lb_embed.title
+    assert "**Lilly** — **1** clean sheet" in lb_embed.description
+
+
 
 
 

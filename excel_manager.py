@@ -21,6 +21,7 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
 from models import MatchRecord, MatchResult, PlayerAggregateRecord, PlayerStat, canonicalize_player_name
+from stats import get_match_player_conceded_goals
 
 LOGGER = logging.getLogger("efootball_bot.excel_manager")
 
@@ -64,6 +65,7 @@ LEADERBOARD_HEADERS = [
     "APG",
     "GAPG",
     "Hattricks",
+    "CleanSheets",
 ]
 
 HEADER_FILL = PatternFill(start_color="1F4E79", end_color="1F4E79", fill_type="solid")
@@ -267,6 +269,20 @@ class ExcelManager:
         # Club player stats by canonical player name across all matches
         player_data: Dict[str, dict] = {}
         for m in matches_info:
+            match_rec = MatchRecord(
+                match_id=m["match_id"],
+                date=m["date"],
+                result=m["result"],
+                submitted_by=m["submitted_by"],
+                screenshot_ref=m["screenshot_ref"],
+                notes=m["notes"],
+                player_stats=m["player_stats"],
+            )
+            hs, a_s = (0, 0)
+            if m["player_stats"]:
+                from stats import extract_match_scores
+                hs, a_s = extract_match_scores(match_rec)
+
             for stat in m["player_stats"]:
                 p_name = canonicalize_player_name(stat.player)
                 if not p_name:
@@ -280,6 +296,7 @@ class ExcelManager:
                         "wins": 0,
                         "losses": 0,
                         "hattricks": 0,
+                        "clean_sheets": 0,
                         "latest_match": m["match_id"],
                     }
                 data = player_data[p_name]
@@ -288,8 +305,12 @@ class ExcelManager:
                 data["assists"] += stat.assists
                 if stat.goals >= 3:
                     data["hattricks"] += 1
+                conceded = get_match_player_conceded_goals(match_rec, stat)
+                is_win = stat.result in (MatchResult.HOME_WIN, MatchResult.WIN)
+                if conceded == 0 and (is_win or (match_rec.result == MatchResult.DRAW and hs == 0 and a_s == 0)):
+                    data["clean_sheets"] += 1
                 data["latest_match"] = m["match_id"]
-                if stat.result in (MatchResult.HOME_WIN, MatchResult.WIN):
+                if is_win:
                     data["wins"] += 1
                 elif stat.result in (MatchResult.AWAY_WIN, MatchResult.LOSS):
                     data["losses"] += 1
@@ -308,6 +329,7 @@ class ExcelManager:
                             old_w = int(row[5]) if len(row) > 5 and row[5] is not None else 0
                             old_l = int(row[6]) if len(row) > 6 and row[6] is not None else 0
                             old_ht = int(row[12]) if len(row) > 12 and row[12] is not None else 0
+                            old_cs = int(row[13]) if len(row) > 13 and row[13] is not None else 0
                             player_data[old_p] = {
                                 "player": old_p,
                                 "matches": old_mp,
@@ -316,6 +338,7 @@ class ExcelManager:
                                 "wins": old_w,
                                 "losses": old_l,
                                 "hattricks": old_ht,
+                                "clean_sheets": old_cs,
                                 "latest_match": "Manual",
                             }
                         except Exception:
@@ -341,6 +364,7 @@ class ExcelManager:
                                 "wins": 0,
                                 "losses": 0,
                                 "hattricks": 0,
+                                "clean_sheets": 0,
                                 "latest_match": old_m_id,
                             }
                         except Exception:
@@ -403,6 +427,7 @@ class ExcelManager:
                 f"=IF(B{r}>0, D{r}/B{r}, 0)",
                 f"=IF(B{r}>0, E{r}/B{r}, 0)",
                 d.get("hattricks", 0),
+                d.get("clean_sheets", 0),
             ]
             ws_lb.append(row_data)
             for c_idx in range(1, len(row_data) + 1):
@@ -717,6 +742,7 @@ class ExcelManager:
                 gapg_raw = ws.cell(row=r, column=12).value
                 gapg = float(gapg_raw) if isinstance(gapg_raw, (int, float)) else (round(ga / mp, 2) if mp > 0 else 0.0)
                 hattricks = _safe_int(13)
+                clean_sheets = _safe_int(14)
 
                 records.append({
                     "player": player,
@@ -733,6 +759,7 @@ class ExcelManager:
                     "apg": apg,
                     "gapg": gapg,
                     "hattricks": hattricks,
+                    "clean_sheets": clean_sheets,
                 })
             return records
         finally:

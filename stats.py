@@ -18,7 +18,56 @@ from models import (
 )
 
 
-def calculate_player_aggregates(player_stats: List[PlayerStat]) -> Dict[str, PlayerAggregateRecord]:
+def get_match_player_conceded_goals(match: MatchRecord, stat: PlayerStat) -> int:
+    """Returns how many goals the given player's side conceded in a match."""
+    hs, a_s = extract_match_scores(match)
+    p_won = stat.result in (MatchResult.WIN, MatchResult.HOME_WIN)
+    p_lost = stat.result in (MatchResult.LOSS, MatchResult.AWAY_WIN)
+
+    if match.result in (MatchResult.HOME_WIN, MatchResult.WIN):
+        if p_won:
+            return a_s
+        if p_lost:
+            return hs
+    elif match.result == MatchResult.AWAY_WIN:
+        if p_won:
+            return hs
+        if p_lost:
+            return a_s
+    elif match.result == MatchResult.DRAW:
+        return a_s if p_won or stat.result == MatchResult.DRAW else hs
+
+    return min(hs, a_s) if p_won else max(hs, a_s)
+
+
+def calculate_player_conceded_and_clean_sheets(matches: List[MatchRecord]) -> Dict[str, dict]:
+    """Calculates clean sheets and goals conceded per canonical lowercase player key."""
+    stats_map: Dict[str, dict] = {}
+    for match in matches:
+        hs, a_s = extract_match_scores(match)
+        for stat in match.player_stats:
+            canonical = canonicalize_player_name(stat.player)
+            key = canonical.strip().lower()
+            if not key:
+                continue
+            entry = stats_map.setdefault(
+                key,
+                {"player": canonical, "clean_sheets": 0, "goals_conceded": 0, "matches": 0},
+            )
+            conceded = get_match_player_conceded_goals(match, stat)
+            entry["goals_conceded"] += conceded
+            entry["matches"] += 1
+            is_win = stat.result in (MatchResult.WIN, MatchResult.HOME_WIN)
+            is_zero_draw = match.result == MatchResult.DRAW and hs == 0 and a_s == 0
+            if conceded == 0 and (is_win or is_zero_draw):
+                entry["clean_sheets"] += 1
+    return stats_map
+
+
+def calculate_player_aggregates(
+    player_stats: List[PlayerStat],
+    matches: Optional[List[MatchRecord]] = None,
+) -> Dict[str, PlayerAggregateRecord]:
     """Calculates cumulative career statistics for each player from raw match entries.
 
     Groups case-insensitively while preserving the most recent display name casing.
@@ -60,8 +109,10 @@ def calculate_player_aggregates(player_stats: List[PlayerStat]) -> Dict[str, Pla
         elif stat.result == MatchResult.DRAW:
             data["draws"] += 1
 
+    cs_map = calculate_player_conceded_and_clean_sheets(matches) if matches else {}
     records: Dict[str, PlayerAggregateRecord] = {}
     for norm_name, d in player_data.items():
+        cs_count = cs_map.get(norm_name, {}).get("clean_sheets", 0)
         records[norm_name] = PlayerAggregateRecord.compute(
             player=d["display_name"],
             matches_played=d["matches"],
@@ -71,6 +122,7 @@ def calculate_player_aggregates(player_stats: List[PlayerStat]) -> Dict[str, Pla
             losses=d["losses"],
             draws=d["draws"],
             hattricks=d["hattricks"],
+            clean_sheets=cs_count,
         )
 
     return records
@@ -156,6 +208,11 @@ def get_leaderboard(
     elif category == LeaderboardCategory.HATTRICK:
         records.sort(
             key=lambda r: (r.hattricks, r.goals, r.matches_played),
+            reverse=True,
+        )
+    elif category == LeaderboardCategory.CLEAN_SHEETS:
+        records.sort(
+            key=lambda r: (r.clean_sheets, r.wins, r.win_rate, r.matches_played),
             reverse=True,
         )
     else:
@@ -728,4 +785,114 @@ def calculate_hall_of_fame(matches: List[MatchRecord]) -> dict:
         "hattrick_king": hattrick_leader[0] if hattrick_leader else None,
         "top_scorer": goal_leader[0] if goal_leader else None,
         "top_assister": assist_leader[0] if assist_leader else None,
+    }
+
+
+def calculate_match_motm_and_milestones(
+    saved_match: MatchRecord,
+    all_matches: List[MatchRecord],
+) -> dict:
+    """Computes Man of the Match and celebratory milestones triggered by a newly saved match."""
+    if not saved_match.player_stats:
+        return {"motm": None, "milestones": []}
+
+    # 1. Pick Man of the Match
+    scored_players: List[dict] = []
+    for stat in saved_match.player_stats:
+        c_name = canonicalize_player_name(stat.player)
+        is_win = stat.result in (MatchResult.WIN, MatchResult.HOME_WIN)
+        impact = round(stat.goals * 1.0 + stat.assists * 0.8 + (0.6 if is_win else 0.0), 2)
+        scored_players.append(
+            {
+                "player": c_name,
+                "goals": stat.goals,
+                "assists": stat.assists,
+                "is_win": is_win,
+                "score": impact,
+            }
+        )
+
+    scored_players.sort(
+        key=lambda x: (x["score"], x["goals"] + x["assists"], x["goals"], 1 if x["is_win"] else 0),
+        reverse=True,
+    )
+    motm = scored_players[0]
+
+    # 2. Compute match and career milestones
+    milestones: List[str] = []
+    cs_winners: List[str] = []
+
+    for stat in saved_match.player_stats:
+        c_name = canonicalize_player_name(stat.player)
+        is_win = stat.result in (MatchResult.WIN, MatchResult.HOME_WIN)
+        if stat.goals >= 3:
+            milestones.append(f"🎩 **Hattrick!** {c_name} scored **{stat.goals} goals**")
+        if stat.assists >= 3:
+            milestones.append(f"🎯 **Playmaker!** {c_name} registered **{stat.assists} assists**")
+        if is_win and get_match_player_conceded_goals(saved_match, stat) == 0:
+            cs_winners.append(c_name)
+
+    if cs_winners:
+        milestones.append(f"🧤 **Clean Sheet!** {', '.join(cs_winners)} kept a shutout")
+
+    # Compare before vs after for career milestones, streaks & records
+    prior_matches = [m for m in all_matches if m.match_id != saved_match.match_id]
+    prior_stats = [ps for m in prior_matches for ps in m.player_stats]
+    all_stats = [ps for m in all_matches for ps in m.player_stats]
+    prior_aggs = calculate_player_aggregates(prior_stats, prior_matches) if prior_stats else {}
+    curr_aggs = calculate_player_aggregates(all_stats, all_matches) if all_stats else {}
+
+    prev_max_g = max((ps.goals for ps in prior_stats), default=0)
+    prev_max_a = max((ps.assists for ps in prior_stats), default=0)
+    prev_max_ga = max((ps.goals + ps.assists for ps in prior_stats), default=0)
+
+    thresholds_primary = (10, 20, 25, 50, 75, 100)
+    thresholds_mp = (10, 25, 50, 100)
+
+    seen_players: set[str] = set()
+    for stat in saved_match.player_stats:
+        c_name = canonicalize_player_name(stat.player)
+        key = c_name.strip().lower()
+        if not key or key in seen_players:
+            continue
+        seen_players.add(key)
+
+        if prior_stats:
+            if stat.goals > prev_max_g and stat.goals > 0:
+                milestones.append(f"👑 **New Record!** {c_name} set a single-match record of **{stat.goals} goals**!")
+            if stat.assists > prev_max_a and stat.assists > 0:
+                milestones.append(f"👑 **New Record!** {c_name} set a single-match record of **{stat.assists} assists**!")
+            if (stat.goals + stat.assists) > prev_max_ga and (stat.goals + stat.assists) > 0:
+                milestones.append(
+                    f"🌟 **New Record!** {c_name} set a single-match G/A high of **{stat.goals + stat.assists}**!"
+                )
+
+        f_data = calculate_player_form(c_name, all_matches, window=5)
+        if f_data["current_streak_type"] == "W" and f_data["current_streak_count"] >= 3:
+            milestones.append(
+                f"🔥 **Hot Streak!** {c_name} is on a **{f_data['current_streak_count']}-match win streak**"
+            )
+
+        curr_rec = curr_aggs.get(key)
+        prev_rec = prior_aggs.get(key)
+        if curr_rec:
+            prev_g = prev_rec.goals if prev_rec else 0
+            prev_a = prev_rec.assists if prev_rec else 0
+            prev_w = prev_rec.wins if prev_rec else 0
+            prev_mp = prev_rec.matches_played if prev_rec else 0
+
+            for th in thresholds_primary:
+                if prev_g < th <= curr_rec.goals:
+                    milestones.append(f"⚽ **Milestone!** {c_name} reached **{th} career goals**")
+                if prev_a < th <= curr_rec.assists:
+                    milestones.append(f"🅰️ **Milestone!** {c_name} reached **{th} career assists**")
+                if prev_w < th <= curr_rec.wins:
+                    milestones.append(f"🏆 **Milestone!** {c_name} reached **{th} career wins**")
+            for th in thresholds_mp:
+                if prev_mp < th <= curr_rec.matches_played:
+                    milestones.append(f"📅 **Milestone!** {c_name} played their **{th}th match**")
+
+    return {
+        "motm": motm,
+        "milestones": milestones,
     }

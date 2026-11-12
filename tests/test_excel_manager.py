@@ -69,6 +69,7 @@ async def test_workbook_initialization(tmp_path: Path) -> None:
         "APG",
         "GAPG",
         "Hattricks",
+        "CleanSheets",
     ]
     wb.close()
 
