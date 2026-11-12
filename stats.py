@@ -926,6 +926,9 @@ def calculate_player_card_stats(
     apg = float(record.get("apg", 0.0))
     gapg = float(record.get("gapg", 0.0))
     win_rate = float(record.get("win_rate", 0.0))
+    wins = int(record.get("wins", 0))
+    if wins == 0 and win_rate > 0 and mp > 0:
+        wins = int(round((win_rate / 100.0) * mp))
     clean_sheets = int(record.get("clean_sheets", 0))
 
     raw_rating = compute_player_rating(record)
@@ -950,12 +953,24 @@ def calculate_player_card_stats(
 
     dribbling = int(max(60, min(99, round(60.0 + gapg * 11.5))))
 
+    # Realistic Defending: Composite decimal-weighted defensive efficiency
+    # 50% Goals Conceded containment + 30% Winning contribution + 20% Clean Sheet rate
     cs_map = calculate_player_conceded_and_clean_sheets(matches)
     c_entry = cs_map.get(canonical.lower(), {})
     goals_conceded = int(c_entry.get("goals_conceded", 0))
+    clean_sheets = max(clean_sheets, int(c_entry.get("clean_sheets", 0)))
     c_matches = int(c_entry.get("matches", 0)) or max(mp, 1)
     gc_per_game = goals_conceded / c_matches
-    defending = int(max(60, min(99, round(92.0 - gc_per_game * 8.0 + clean_sheets * 2.0))))
+
+    gc_factor = max(0.0, min(1.0, 1.0 - (gc_per_game / 4.0)))
+    win_factor = max(0.0, min(1.0, (wins / max(mp, 1)) if mp > 0 else (win_rate / 100.0)))
+    cs_factor = max(0.0, min(1.0, clean_sheets / max(mp, 1)))
+
+    raw_def_efficiency = (0.50 * gc_factor) + (0.30 * win_factor) + (0.20 * cs_factor)
+    def_damping_k = 3.0
+    baseline_def = 0.45
+    damped_def_efficiency = ((mp / (mp + def_damping_k)) * raw_def_efficiency) + ((def_damping_k / (mp + def_damping_k)) * baseline_def)
+    defending = int(max(60, min(99, round(60.0 + 39.0 * damped_def_efficiency))))
 
     physical = int(max(60, min(99, round((rating + pace + dribbling) / 3.0))))
 

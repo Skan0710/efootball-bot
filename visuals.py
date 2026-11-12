@@ -224,10 +224,20 @@ def render_fc27_card(card: dict) -> io.BytesIO:
     # Small club pill under position
     draw.text((88, 162), "CO-OP FC", font=font_tier, fill=theme["subtext"], anchor="mm")
 
-    # Stylized Avatar / Crest Emblem or Player PFP on center-right
-    cx, cy = 266, 200
-    radius = 82
-    draw.ellipse([(cx - radius - 6, cy - radius - 6), (cx + radius + 6, cy + radius + 6)], fill=(*theme["accent_soft"], 90), outline=(*theme["accent"], 220), width=4)
+    # Stylized Avatar / Crest Emblem or Player PFP on center-right (Clean Square Display)
+    cx, cy = 266, 198
+    box_size = 172
+    half_box = box_size // 2
+    x0, y0 = cx - half_box, cy - half_box
+    x1, y1 = cx + half_box, cy + half_box
+
+    # Outer metallic square border & background frame
+    draw.rectangle(
+        [(x0 - 5, y0 - 5), (x1 + 5, y1 + 5)],
+        fill=(*theme["accent_soft"], 70),
+        outline=(*theme["accent"], 220),
+        width=3,
+    )
 
     pfp_path = _find_player_pfp(str(card["player"]))
     rendered_pfp = False
@@ -235,29 +245,41 @@ def render_fc27_card(card: dict) -> io.BytesIO:
     if pfp_path:
         try:
             with Image.open(pfp_path) as pfp_img:
-                # Convert to RGBA and center-crop / resize into a square
                 pfp_rgba = pfp_img.convert("RGBA")
-                size = radius * 2
-                cropped = ImageOps.fit(pfp_rgba, (size, size), centering=(0.5, 0.5))
+                w, h = pfp_rgba.size
 
-                # Circular mask
-                circle_mask = Image.new("L", (size, size), 0)
-                mask_draw = ImageDraw.Draw(circle_mask)
-                mask_draw.ellipse([(0, 0), (size - 1, size - 1)], fill=255)
+                # Proportionally scale down if larger than frame; do not enlarge or zoom if smaller
+                scale = min(box_size / max(w, 1), box_size / max(h, 1))
+                if w <= box_size and h <= box_size:
+                    scale = 1.0  # Prevent enlargement/zooming
+                else:
+                    scale = min(1.0, scale)
 
-                canvas.paste(cropped, (cx - radius, cy - radius), circle_mask)
-                draw.ellipse([(cx - radius, cy - radius), (cx + radius, cy + radius)], outline=(*theme["divider"], 220), width=3)
+                new_w = max(1, int(round(w * scale)))
+                new_h = max(1, int(round(h * scale)))
+                resized = pfp_rgba.resize((new_w, new_h), Image.Resampling.LANCZOS)
+
+                # Inner square frame fill
+                draw.rectangle([(x0, y0), (x1, y1)], fill=(*theme["bg_bot"], 240))
+
+                # Center the fitted image perfectly inside the square without cropping or zooming
+                paste_x = x0 + (box_size - new_w) // 2
+                paste_y = y0 + (box_size - new_h) // 2
+                canvas.paste(resized, (paste_x, paste_y), mask=resized)
+
+                # Inner metallic frame outline
+                draw.rectangle([(x0, y0), (x1, y1)], outline=(*theme["divider"], 220), width=2)
                 rendered_pfp = True
         except Exception:
             rendered_pfp = False
 
     if not rendered_pfp:
-        draw.ellipse([(cx - 72, cy - 72), (cx + 72, cy + 72)], fill=(*theme["bg_bot"], 180), outline=(*theme["divider"], 180), width=2)
+        draw.rectangle([(x0, y0), (x1, y1)], fill=(*theme["bg_bot"], 180), outline=(*theme["divider"], 180), width=2)
         # Stylized footballer shoulders & head silhouette fallback
-        draw.ellipse([(cx - 24, cy - 48), (cx + 24, cy + 0)], fill=theme["accent"])
-        draw.chord([(cx - 50, cy + 2), (cx + 50, cy + 78)], start=180, end=360, fill=theme["accent"])
+        draw.ellipse([(cx - 24, cy - 44), (cx + 24, cy + 4)], fill=theme["accent"])
+        draw.chord([(cx - 50, cy + 6), (cx + 50, cy + 82)], start=180, end=360, fill=theme["accent"])
         initials = "".join(ch for ch in str(card["player"])[:2]).upper() or "FC"
-        draw.text((cx, cy + 32), initials, font=_load_font(22, bold=True), fill=theme["bg_bot"], anchor="mm")
+        draw.text((cx, cy + 36), initials, font=_load_font(22, bold=True), fill=theme["bg_bot"], anchor="mm")
 
     # Tier badge at top-right inside shield
     draw.text((width - 102, 68), theme["tier_label"], font=font_tier, fill=theme["subtext"], anchor="mm")
