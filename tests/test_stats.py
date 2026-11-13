@@ -223,6 +223,11 @@ def test_player_name_canonicalization() -> None:
     assert canonicalize_player_name("MrAshy21") == "Ashy"
     assert canonicalize_player_name("mrashy21") == "Ashy"
 
+    # Roshan
+    assert canonicalize_player_name("16_roshan") == "Roshan"
+    assert canonicalize_player_name("Roshan16") == "Roshan"
+    assert canonicalize_player_name("roshan") == "Roshan"
+
 
 def test_multiple_aliases_merged_into_single_player_record() -> None:
     """Verifies stats for different aliases merge into one single canonical player record."""

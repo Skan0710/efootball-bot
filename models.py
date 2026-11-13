@@ -42,6 +42,10 @@ PLAYER_CANONICAL_MAP: Dict[str, str] = {
     # Ashy (Ashy, MrAshy21)
     "ashy": "Ashy",
     "mrashy21": "Ashy",
+    # Roshan (Roshan, 16_roshan, Roshan16)
+    "roshan": "Roshan",
+    "16roshan": "Roshan",
+    "roshan16": "Roshan",
 }
 
 
@@ -64,6 +68,8 @@ def canonicalize_player_name(name: str) -> str:
     # Prefix / stem checks for OCR variations and noise
     if "ashy" in clean:
         return "Ashy"
+    if "roshan" in clean:
+        return "Roshan"
     if "jonny" in clean or "jonaldinho" in clean:
         return "Jonny"
     if clean.startswith("azlan"):
