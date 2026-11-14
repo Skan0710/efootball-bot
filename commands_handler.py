@@ -37,6 +37,7 @@ from stats import (
     calculate_player_card_stats,
     calculate_player_chemistry,
     calculate_player_form,
+    calculate_duo_card_stats,
     calculate_player_rivalry,
     calculate_player_tierlist,
     calculate_player_trophies,
@@ -53,6 +54,7 @@ from stats import (
 )
 from visuals import (
     render_compare_chart,
+    render_duo_card,
     render_fc27_card,
     render_form_chart,
     render_match_summary_card,
@@ -2736,3 +2738,49 @@ def register_commands(
 
         embed.set_footer(text="Grudge Match Tracker • Co-op Historical Head-to-Head")
         await interaction.followup.send(embed=embed)
+
+    @tree.command(
+        name="duo-card",
+        description="Display an EA FC Dynamic Duo dual card showcasing chemistry, synergy, and partnership stats",
+    )
+    @app_commands.describe(
+        player1="Name of the first partner",
+        player2="Name of the second partner",
+    )
+    async def duo_card(interaction: discord.Interaction, player1: str, player2: str) -> None:
+        await interaction.response.defer(thinking=True)
+        records = await excel_manager.get_leaderboard_from_sheet()
+        all_matches = await excel_manager.get_all_matches()
+
+        try:
+            duo_data = calculate_duo_card_stats(player1, player2, records, all_matches)
+        except ValueError as e:
+            await interaction.followup.send(f"⚠️ {e}")
+            return
+        except Exception as e:
+            logger.exception("Failed to calculate duo card stats")
+            await interaction.followup.send(f"⚠️ An error occurred while generating the duo card: {e}")
+            return
+
+        chart_buf = render_duo_card(duo_data)
+        chart_file = discord.File(fp=chart_buf, filename="dynamic_duo.png")
+
+        c1 = duo_data["card1"]
+        c2 = duo_data["card2"]
+
+        embed = discord.Embed(
+            title=f"✨ Dynamic Duo: {duo_data['player1']} & {duo_data['player2']}",
+            description=(
+                f"**{duo_data['title']}** ({duo_data['synergy_tier']} Chemistry)\n\n"
+                f"🤝 **Matches as Duo:** {duo_data['matches_together']}\n"
+                f"🏆 **Win Rate Together:** **{duo_data['win_rate']:.1f}%** ({duo_data['wins_together']}W - {duo_data['draws_together']}D - {duo_data['losses_together']}L)\n"
+                f"⚽ **Combined G/A:** **{duo_data['combined_ga']}** ({duo_data['combined_goals']} Goals, {duo_data['combined_assists']} Assists)\n"
+                f"🧤 **Clean Sheets:** {duo_data['clean_sheets_together']}\n"
+                f"⭐ **Duo Average OVR:** **{duo_data['avg_ovr']}** ({c1['player']} {c1['rating']} | {c2['player']} {c2['rating']})"
+            ),
+            color=discord.Color.from_rgb(*duo_data["synergy_color"]),
+            timestamp=datetime.now(),
+        )
+        embed.set_image(url="attachment://dynamic_duo.png")
+        embed.set_footer(text="EA FC 27 Dynamic Duo • Special Partnership Chemistry Card")
+        await interaction.followup.send(embed=embed, file=chart_file)

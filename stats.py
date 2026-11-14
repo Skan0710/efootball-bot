@@ -1496,3 +1496,118 @@ def calculate_player_rivalry(
         "p2_biggest_win": p2_biggest_win,
         "recent_clashes": list(reversed(clashes))[:5],
     }
+
+
+def calculate_duo_card_stats(
+    player1_name: str,
+    player2_name: str,
+    leaderboard_records: List[dict],
+    matches: List[MatchRecord],
+) -> dict:
+    """Computes partnership synergy and individual attributes for an EA FC Dynamic Duo card."""
+    c1 = canonicalize_player_name(player1_name)
+    c2 = canonicalize_player_name(player2_name)
+    k1 = c1.strip().lower()
+    k2 = c2.strip().lower()
+
+    if not k1 or not k2:
+        raise ValueError("Both player names must be non-empty.")
+    if k1 == k2:
+        raise ValueError(f"Cannot form a duo card with the same player ({c1}).")
+
+    card1 = calculate_player_card_stats(c1, leaderboard_records, matches)
+    card2 = calculate_player_card_stats(c2, leaderboard_records, matches)
+
+    if not card1:
+        raise ValueError(f"Player '{c1}' not found in leaderboard.")
+    if not card2:
+        raise ValueError(f"Player '{c2}' not found in leaderboard.")
+
+    matches_together = 0
+    wins_together = 0
+    losses_together = 0
+    draws_together = 0
+    combined_goals = 0
+    combined_assists = 0
+    clean_sheets_together = 0
+
+    for m in matches:
+        p_map = {canonicalize_player_name(ps.player).lower(): ps for ps in m.player_stats}
+        if k1 not in p_map or k2 not in p_map:
+            continue
+
+        s1 = p_map[k1]
+        s2 = p_map[k2]
+
+        s1_won = s1.result in (MatchResult.WIN, MatchResult.HOME_WIN)
+        s1_lost = s1.result in (MatchResult.LOSS, MatchResult.AWAY_WIN)
+        s2_won = s2.result in (MatchResult.WIN, MatchResult.HOME_WIN)
+        s2_lost = s2.result in (MatchResult.LOSS, MatchResult.AWAY_WIN)
+
+        is_partner = False
+        if (s1_won and s2_won) or (s1_lost and s2_lost):
+            is_partner = True
+        elif s1.result == MatchResult.DRAW and s2.result == MatchResult.DRAW:
+            p_list = [canonicalize_player_name(ps.player).lower() for ps in m.player_stats]
+            idx1 = p_list.index(k1)
+            idx2 = p_list.index(k2)
+            half = len(p_list) // 2
+            if (idx1 < half and idx2 < half) or (idx1 >= half and idx2 >= half):
+                is_partner = True
+
+        if not is_partner:
+            continue
+
+        matches_together += 1
+        if s1_won:
+            wins_together += 1
+            if get_match_player_conceded_goals(m, s1) == 0:
+                clean_sheets_together += 1
+        elif s1_lost:
+            losses_together += 1
+        else:
+            draws_together += 1
+
+        combined_goals += (s1.goals + s2.goals)
+        combined_assists += (s1.assists + s2.assists)
+
+    win_rate = round((wins_together / matches_together) * 100.0, 1) if matches_together > 0 else 0.0
+
+    if win_rate >= 80.0 and matches_together >= 3:
+        synergy_tier = "DIAMOND"
+        synergy_color = (45, 212, 191)
+        title = "The Lethal Duo"
+    elif win_rate >= 65.0 and matches_together >= 2:
+        synergy_tier = "GOLD"
+        synergy_color = (250, 204, 21)
+        title = "Dynamic Playmakers"
+    elif win_rate >= 50.0:
+        synergy_tier = "SILVER"
+        synergy_color = (148, 163, 184)
+        title = "Solid Partnership"
+    else:
+        synergy_tier = "BRONZE"
+        synergy_color = (180, 83, 9)
+        title = "Developing Chemistry"
+
+    avg_ovr = int(round((card1["rating"] + card2["rating"]) / 2.0))
+
+    return {
+        "player1": c1,
+        "player2": c2,
+        "card1": card1,
+        "card2": card2,
+        "avg_ovr": avg_ovr,
+        "matches_together": matches_together,
+        "wins_together": wins_together,
+        "losses_together": losses_together,
+        "draws_together": draws_together,
+        "win_rate": win_rate,
+        "combined_goals": combined_goals,
+        "combined_assists": combined_assists,
+        "combined_ga": combined_goals + combined_assists,
+        "clean_sheets_together": clean_sheets_together,
+        "synergy_tier": synergy_tier,
+        "synergy_color": synergy_color,
+        "title": title,
+    }

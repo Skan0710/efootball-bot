@@ -833,3 +833,127 @@ def render_tierlist_card(tiers: Dict[str, List[dict]]) -> io.BytesIO:
     img.save(out, format="PNG")
     out.seek(0)
     return out
+
+
+def render_duo_card(duo: dict) -> io.BytesIO:
+    """Renders a dynamic EA FC style dual chemistry card for two teammates."""
+    width, height = 860, 480
+    bg = (14, 18, 30)
+    card_bg = (22, 28, 46)
+    accent_gold = (236, 193, 92)
+    syn_col = duo.get("synergy_color", (45, 212, 191))
+    text_white = (248, 250, 252)
+    text_muted = (160, 172, 198)
+
+    img = Image.new("RGBA", (width, height), bg)
+    draw = ImageDraw.Draw(img)
+
+    # Outer border
+    draw.rounded_rectangle([(14, 14), (width - 14, height - 14)], radius=20, fill=card_bg, outline=(42, 54, 88), width=3)
+
+    # Header banner
+    draw.text((width // 2, 42), "⚡ DYNAMIC DUOS ⚡", font=_load_font(24, bold=True), fill=accent_gold, anchor="mm")
+    title_text = f"{duo['title'].upper()} • {duo['synergy_tier']} SYNERGY"
+    draw.text((width // 2, 68), title_text, font=_load_font(13, bold=True), fill=syn_col, anchor="mm")
+
+    # Helper to render a player side-card panel
+    def _draw_player_panel(card: dict, x_center: int):
+        pw, ph = 260, 350
+        px0 = x_center - pw // 2
+        py0 = 100
+        px1 = px0 + pw
+        py1 = py0 + ph
+
+        # Sub-panel
+        draw.rounded_rectangle([(px0, py0), (px1, py1)], radius=16, fill=(18, 24, 40), outline=accent_gold, width=2)
+
+        # Rating & Position
+        draw.text((px0 + 44, py0 + 38), str(card["rating"]), font=_load_font(38, bold=True), fill=text_white, anchor="mm")
+        draw.line([(px0 + 24, py0 + 60), (px0 + 64, py0 + 60)], fill=accent_gold, width=2)
+        draw.text((px0 + 44, py0 + 78), str(card["position"]), font=_load_font(18, bold=True), fill=accent_gold, anchor="mm")
+
+        # PFP Square
+        pfp_cx, pfp_cy = px0 + 170, py0 + 80
+        pfp_size = 96
+        half_p = pfp_size // 2
+        draw.rectangle([(pfp_cx - half_p - 3, pfp_cy - half_p - 3), (pfp_cx + half_p + 3, pfp_cy + half_p + 3)], fill=(28, 36, 60), outline=(*syn_col, 220), width=2)
+
+        pfp_path = _find_player_pfp(str(card["player"]))
+        rendered_pfp = False
+        if pfp_path:
+            try:
+                with Image.open(pfp_path) as pfp_img:
+                    pfp_rgba = pfp_img.convert("RGBA")
+                    w, h = pfp_rgba.size
+                    scale = min(pfp_size / max(w, 1), pfp_size / max(h, 1))
+                    if w <= pfp_size and h <= pfp_size:
+                        scale = 1.0
+                    else:
+                        scale = min(1.0, scale)
+                    nw = max(1, int(round(w * scale)))
+                    nh = max(1, int(round(h * scale)))
+                    resized = pfp_rgba.resize((nw, nh), Image.Resampling.LANCZOS)
+                    draw.rectangle([(pfp_cx - half_p, pfp_cy - half_p), (pfp_cx + half_p, pfp_cy + half_p)], fill=(12, 16, 26))
+                    img.paste(resized, (pfp_cx - half_p + (pfp_size - nw) // 2, pfp_cy - half_p + (pfp_size - nh) // 2), mask=resized)
+                    rendered_pfp = True
+            except Exception:
+                rendered_pfp = False
+
+        if not rendered_pfp:
+            draw.rectangle([(pfp_cx - half_p, pfp_cy - half_p), (pfp_cx + half_p, pfp_cy + half_p)], fill=(12, 16, 26))
+            draw.text((pfp_cx, pfp_cy), str(card["player"])[:2].upper(), font=_load_font(24, bold=True), fill=accent_gold, anchor="mm")
+
+        # Name line
+        name_y = py0 + 160
+        draw.line([(px0 + 20, name_y), (px1 - 20, name_y)], fill=(42, 54, 88), width=1)
+        draw.text((x_center, name_y + 20), str(card["player"]).upper(), font=_load_font(20, bold=True), fill=text_white, anchor="mm")
+        draw.line([(px0 + 20, name_y + 40), (px1 - 20, name_y + 40)], fill=(42, 54, 88), width=1)
+
+        # 6 Stats grid
+        stats = [
+            (card["pace"], "PAC"),
+            (card["shooting"], "SHO"),
+            (card["passing"], "PAS"),
+            (card["dribbling"], "DRI"),
+            (card["defending"], "DEF"),
+            (card["physical"], "PHY"),
+        ]
+        s_y = name_y + 60
+        for i in range(3):
+            v_l, l_l = stats[i]
+            draw.text((px0 + 44, s_y + i * 26), str(v_l), font=_load_font(15, bold=True), fill=text_white, anchor="lm")
+            draw.text((px0 + 80, s_y + i * 26), l_l, font=_load_font(13, bold=False), fill=text_muted, anchor="lm")
+            v_r, l_r = stats[i + 3]
+            draw.text((px0 + 145, s_y + i * 26), str(v_r), font=_load_font(15, bold=True), fill=text_white, anchor="lm")
+            draw.text((px0 + 182, s_y + i * 26), l_r, font=_load_font(13, bold=False), fill=text_muted, anchor="lm")
+
+    _draw_player_panel(duo["card1"], 175)
+    _draw_player_panel(duo["card2"], width - 175)
+
+    cx = width // 2
+    draw.line([(290, 260), (cx - 70, 260)], fill=syn_col, width=3)
+    draw.line([(cx + 70, 260), (width - 290, 260)], fill=syn_col, width=3)
+
+    draw.rounded_rectangle([(cx - 80, 120), (cx + 80, 420)], radius=16, fill=(16, 22, 38), outline=syn_col, width=2)
+
+    draw.ellipse([(cx - 40, 140), (cx + 40, 220)], fill=(24, 32, 54), outline=accent_gold, width=2)
+    draw.text((cx, 172), f"{duo['win_rate']:.0f}%", font=_load_font(22, bold=True), fill=accent_gold, anchor="mm")
+    draw.text((cx, 194), "WIN RATE", font=_load_font(9, bold=True), fill=text_muted, anchor="mm")
+
+    cy_list = [240, 275, 310, 345, 380]
+    metrics = [
+        ("Matches", f"{duo['matches_together']}"),
+        ("Wins", f"{duo['wins_together']}"),
+        ("Combined G/A", f"{duo['combined_ga']}"),
+        ("Clean Sheets", f"{duo['clean_sheets_together']}"),
+        ("Avg OVR", f"{duo['avg_ovr']}"),
+    ]
+    for y_pos, (lbl, val) in zip(cy_list, metrics):
+        draw.text((cx - 65, y_pos), lbl, font=_load_font(11, bold=False), fill=text_muted, anchor="lm")
+        draw.text((cx + 65, y_pos), val, font=_load_font(13, bold=True), fill=text_white, anchor="rm")
+        draw.line([(cx - 65, y_pos + 14), (cx + 65, y_pos + 14)], fill=(36, 46, 72), width=1)
+
+    out = io.BytesIO()
+    img.save(out, format="PNG")
+    out.seek(0)
+    return out
