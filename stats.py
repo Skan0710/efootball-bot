@@ -1348,3 +1348,151 @@ def calculate_player_tierlist(
         t_list.sort(key=lambda x: (x["ovr"], x["win_rate"], x["ga"]), reverse=True)
 
     return tiers
+
+
+def calculate_player_rivalry(
+    player1_name: str,
+    player2_name: str,
+    matches: List[MatchRecord],
+) -> dict:
+    """Computes head-to-head match history, goal margins, and bragging rights between two rivals."""
+    c1 = canonicalize_player_name(player1_name)
+    c2 = canonicalize_player_name(player2_name)
+    k1 = c1.strip().lower()
+    k2 = c2.strip().lower()
+
+    if not k1 or not k2:
+        raise ValueError("Both player names must be non-empty.")
+    if k1 == k2:
+        raise ValueError(f"Cannot calculate rivalry against the same player ({c1}).")
+
+    clashes: List[dict] = []
+    p1_wins = 0
+    p2_wins = 0
+    draws = 0
+    p1_goals = 0
+    p2_goals = 0
+    p1_assists = 0
+    p2_assists = 0
+
+    p1_biggest_margin = -1
+    p1_biggest_win: Optional[str] = None
+    p2_biggest_margin = -1
+    p2_biggest_win: Optional[str] = None
+
+    for m in matches:
+        p_map = {canonicalize_player_name(ps.player).lower(): ps for ps in m.player_stats}
+        if k1 not in p_map or k2 not in p_map:
+            continue
+
+        s1 = p_map[k1]
+        s2 = p_map[k2]
+
+        s1_won = s1.result in (MatchResult.WIN, MatchResult.HOME_WIN)
+        s1_lost = s1.result in (MatchResult.LOSS, MatchResult.AWAY_WIN)
+        s2_won = s2.result in (MatchResult.WIN, MatchResult.HOME_WIN)
+        s2_lost = s2.result in (MatchResult.LOSS, MatchResult.AWAY_WIN)
+
+        is_opposing = False
+        if (s1_won and s2_lost) or (s1_lost and s2_won):
+            is_opposing = True
+        elif s1.result == MatchResult.DRAW and s2.result == MatchResult.DRAW:
+            p_list = [canonicalize_player_name(ps.player).lower() for ps in m.player_stats]
+            idx1 = p_list.index(k1)
+            idx2 = p_list.index(k2)
+            half = len(p_list) // 2
+            if (idx1 < half and idx2 >= half) or (idx1 >= half and idx2 < half):
+                is_opposing = True
+
+        if not is_opposing:
+            continue
+
+        p1_g = s1.goals
+        p2_g = s2.goals
+        p1_a = s1.assists
+        p2_a = s2.assists
+
+        p1_goals += p1_g
+        p2_goals += p2_g
+        p1_assists += p1_a
+        p2_assists += p2_a
+
+        h_score, a_score = extract_match_scores(m)
+        margin = abs(h_score - a_score)
+        match_scoreline = f"{h_score}-{a_score}"
+
+        if s1_won:
+            p1_wins += 1
+            winner = c1
+            if margin > p1_biggest_margin:
+                p1_biggest_margin = margin
+                p1_biggest_win = f"{match_scoreline} (+{margin} goals)"
+        elif s2_won:
+            p2_wins += 1
+            winner = c2
+            if margin > p2_biggest_margin:
+                p2_biggest_margin = margin
+                p2_biggest_win = f"{match_scoreline} (+{margin} goals)"
+        else:
+            draws += 1
+            winner = "Draw"
+
+        clashes.append({
+            "match_id": m.match_id,
+            "date": m.date,
+            "winner": winner,
+            "scoreline": match_scoreline,
+            "p1_goals": p1_g,
+            "p2_goals": p2_g,
+            "p1_assists": p1_a,
+            "p2_assists": p2_a,
+        })
+
+    total_clashes = len(clashes)
+    p1_wr = round((p1_wins / total_clashes) * 100.0, 1) if total_clashes > 0 else 0.0
+    p2_wr = round((p2_wins / total_clashes) * 100.0, 1) if total_clashes > 0 else 0.0
+
+    if p1_wins > p2_wins:
+        diff = p1_wins - p2_wins
+        bragging_rights = f"👑 **{c1}** holds bragging rights (+{diff} win{'s' if diff > 1 else ''})"
+        leader = c1
+    elif p2_wins > p1_wins:
+        diff = p2_wins - p1_wins
+        bragging_rights = f"👑 **{c2}** holds bragging rights (+{diff} win{'s' if diff > 1 else ''})"
+        leader = c2
+    else:
+        bragging_rights = f"🤝 **Dead Heat** — Tied at {p1_wins} win{'s' if p1_wins != 1 else ''} each!"
+        leader = "Tied"
+
+    current_streak = "None"
+    if clashes:
+        last_winner = clashes[-1]["winner"]
+        if last_winner in (c1, c2):
+            streak_count = 0
+            for c in reversed(clashes):
+                if c["winner"] == last_winner:
+                    streak_count += 1
+                else:
+                    break
+            current_streak = f"{last_winner} ({streak_count}W)"
+
+    return {
+        "player1": c1,
+        "player2": c2,
+        "total_clashes": total_clashes,
+        "p1_wins": p1_wins,
+        "p2_wins": p2_wins,
+        "draws": draws,
+        "p1_win_rate": p1_wr,
+        "p2_win_rate": p2_wr,
+        "p1_goals": p1_goals,
+        "p2_goals": p2_goals,
+        "p1_assists": p1_assists,
+        "p2_assists": p2_assists,
+        "leader": leader,
+        "bragging_rights": bragging_rights,
+        "current_streak": current_streak,
+        "p1_biggest_win": p1_biggest_win,
+        "p2_biggest_win": p2_biggest_win,
+        "recent_clashes": list(reversed(clashes))[:5],
+    }

@@ -62,6 +62,7 @@ def test_command_registration_names(test_config: BotConfig, tmp_path: Path) -> N
         "recap",
         "trophies",
         "tierlist",
+        "rivalry",
     }
     assert registered_names == expected_commands
 

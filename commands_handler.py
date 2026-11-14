@@ -37,6 +37,7 @@ from stats import (
     calculate_player_card_stats,
     calculate_player_chemistry,
     calculate_player_form,
+    calculate_player_rivalry,
     calculate_player_tierlist,
     calculate_player_trophies,
     calculate_potm_rankings,
@@ -2661,3 +2662,77 @@ def register_commands(
         embed.set_image(url="attachment://server_tierlist.png")
         embed.set_footer(text="Rankings calibrated by FC 27 OVR ratings and career statistics")
         await interaction.followup.send(embed=embed, file=chart_file)
+
+    @tree.command(
+        name="rivalry",
+        description="Head-to-head grudge match tracker when two players clashed on opposing teams",
+    )
+    @app_commands.describe(
+        player1="Name of the first player",
+        player2="Name of the rival player",
+    )
+    async def rivalry(interaction: discord.Interaction, player1: str, player2: str) -> None:
+        await interaction.response.defer(thinking=True)
+        all_matches = await excel_manager.get_all_matches()
+
+        try:
+            riv = calculate_player_rivalry(player1, player2, all_matches)
+        except ValueError as e:
+            await interaction.followup.send(f"⚠️ {e}")
+            return
+        except Exception as e:
+            logger.exception("Failed to compute player rivalry")
+            await interaction.followup.send(f"⚠️ An error occurred while computing rivalry: {e}")
+            return
+
+        if riv["total_clashes"] == 0:
+            await interaction.followup.send(f"⚔️ **{riv['player1']}** and **{riv['player2']}** have never faced each other on opposing teams yet!")
+            return
+
+        p1 = riv["player1"]
+        p2 = riv["player2"]
+
+        recent_text = ""
+        for c in riv["recent_clashes"]:
+            winner_icon = "🟢" if c["winner"] == p1 else ("🔴" if c["winner"] == p2 else "⚪")
+            recent_text += f"{winner_icon} **{c['date']}** • `{c['scoreline']}` (Winner: **{c['winner']}**)\n"
+
+        embed = discord.Embed(
+            title=f"⚔️ Head-to-Head Rivalry: {p1} vs {p2}",
+            description=f"{riv['bragging_rights']}\n\n🔥 **Active Streak:** {riv['current_streak']}",
+            color=discord.Color.dark_red() if riv["leader"] == p1 else (discord.Color.blue() if riv["leader"] == p2 else discord.Color.greyple()),
+            timestamp=datetime.now(),
+        )
+
+        embed.add_field(
+            name=f"📊 Head-to-Head Record ({riv['total_clashes']} Clashes)",
+            value=(
+                f"**{p1}:** {riv['p1_wins']} Wins ({riv['p1_win_rate']:.1f}%)\n"
+                f"**{p2}:** {riv['p2_wins']} Wins ({riv['p2_win_rate']:.1f}%)\n"
+                f"**Draws:** {riv['draws']}"
+            ),
+            inline=True,
+        )
+
+        embed.add_field(
+            name="⚽ Goals & Assists in Clashes",
+            value=(
+                f"**{p1}:** {riv['p1_goals']}G / {riv['p1_assists']}A\n"
+                f"**{p2}:** {riv['p2_goals']}G / {riv['p2_assists']}A\n"
+                f"**Total Clash Goals:** {riv['p1_goals'] + riv['p2_goals']}"
+            ),
+            inline=True,
+        )
+
+        if riv["p1_biggest_win"] or riv["p2_biggest_win"]:
+            biggest_win_str = (
+                f"• **{p1} Biggest Win:** {riv['p1_biggest_win'] or 'None'}\n"
+                f"• **{p2} Biggest Win:** {riv['p2_biggest_win'] or 'None'}"
+            )
+            embed.add_field(name="💥 Blowout Victories", value=biggest_win_str, inline=False)
+
+        if recent_text:
+            embed.add_field(name="🕒 Recent Encounters", value=recent_text, inline=False)
+
+        embed.set_footer(text="Grudge Match Tracker • Co-op Historical Head-to-Head")
+        await interaction.followup.send(embed=embed)
