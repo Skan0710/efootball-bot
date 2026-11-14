@@ -39,7 +39,7 @@ venv.bak/
 .env.local
 .env.*.local
 
-# Excel data (preserve .gitkeep)
+# Excel and json data (preserve .gitkeep)
 *.xlsx
 *.xlsm
 *.xls
@@ -47,6 +47,7 @@ venv.bak/
 **/*.xlsm
 data/*.xlsx
 data/*.xlsm
+data/*.json
 data/*.bak
 data/backups/
 !data/.gitkeep
@@ -67,6 +68,10 @@ htmlcov/
 # Logs
 *.log
 logs/
+
+# Automation scripts
+auto_commit_runner.py
+scripts/commit_plan/
 
 # Operating System files
 .DS_Store

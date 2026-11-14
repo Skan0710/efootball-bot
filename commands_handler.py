@@ -28,8 +28,10 @@ from models import (
     canonicalize_player_name,
 )
 from ocr import extract_player_stats_from_screenshot, validate_image_file
+from predictions_manager import PredictionsManager
 from stats import (
     calculate_best_teams,
+    calculate_duo_card_stats,
     calculate_hall_of_fame,
     calculate_head_to_head,
     calculate_match_motm_and_milestones,
@@ -37,15 +39,14 @@ from stats import (
     calculate_player_card_stats,
     calculate_player_chemistry,
     calculate_player_form,
-    calculate_duo_card_stats,
-    calculate_squad_lineup,
     calculate_player_rivalry,
     calculate_player_tierlist,
     calculate_player_trophies,
     calculate_potm_rankings,
     calculate_potw_rankings,
-    compute_player_card_ovr,
     calculate_session_recap,
+    calculate_squad_lineup,
+    compute_player_card_ovr,
     compute_player_rating,
     extract_match_scores,
     generate_fair_teams,
@@ -56,14 +57,16 @@ from stats import (
 from visuals import (
     render_compare_chart,
     render_duo_card,
-    render_squad_pitch,
     render_fc27_card,
     render_form_chart,
     render_match_summary_card,
+    render_squad_pitch,
     render_tierlist_card,
 )
 
 LOGGER = logging.getLogger("efootball_bot.commands")
+
+PREDICTIONS_MANAGER = PredictionsManager()
 
 # In-memory store of recent image hashes to prevent accidental duplicate submissions
 RECENT_IMAGE_HASHES: set[str] = set()
@@ -654,6 +657,23 @@ class MatchPreviewView(discord.ui.View):
                         announce_embed.add_field(
                             name="🏆 Milestones Unlocked",
                             value="\n".join(milestones),
+                            inline=False,
+                        )
+
+                    pred_winners = PREDICTIONS_MANAGER.resolve_predictions(
+                        record.match_id,
+                        self.result,
+                        h_val,
+                        a_val,
+                    )
+                    if pred_winners:
+                        w_lines = [
+                            f"• **{w['user_name']}**: +{w['points']} pts" + (" *(Exact Score! 🎯)*" if w.get("exact_score") else "")
+                            for w in pred_winners
+                        ]
+                        announce_embed.add_field(
+                            name="🎯 Matchday Predictions",
+                            value="\n".join(w_lines),
                             inline=False,
                         )
 
@@ -2668,6 +2688,113 @@ def register_commands(
         await interaction.followup.send(embed=embed, file=chart_file)
 
     @tree.command(
+        name="squad",
+        description="Display the starting lineup and tactical pitch view of the co-op squad",
+    )
+    async def squad(interaction: discord.Interaction) -> None:
+        await interaction.response.defer(thinking=True)
+        records = await excel_manager.get_leaderboard_from_sheet()
+        all_matches = await excel_manager.get_all_matches()
+        if not records:
+            await interaction.followup.send("📋 No player records found to generate a squad lineup.")
+            return
+
+        lineup = calculate_squad_lineup(records, all_matches)
+        pitch_buf = render_squad_pitch(lineup, title="CO-OP STARTING XI & SQUAD PITCH")
+        pitch_file = discord.File(fp=pitch_buf, filename="squad_pitch.png")
+
+        att_str = ", ".join(f"**{p['player']}** ({p['rating']})" for p in lineup["attackers"]) or "None"
+        mid_str = ", ".join(f"**{p['player']}** ({p['rating']})" for p in lineup["midfielders"]) or "None"
+        def_str = ", ".join(f"**{p['player']}** ({p['rating']})" for p in lineup["defenders"]) or "None"
+
+        embed = discord.Embed(
+            title="⚽ Co-op Squad Starting Lineup",
+            description=(
+                f"**Average OVR:** ⭐ **{lineup['avg_ovr']}** • **Squad Size:** {lineup['squad_size']} Players\n\n"
+                f"⚔️ **Attackers:** {att_str}\n"
+                f"🎯 **Midfielders:** {mid_str}\n"
+                f"🛡️ **Defenders:** {def_str}"
+            ),
+            color=discord.Color.brand_green(),
+            timestamp=datetime.now(),
+        )
+        embed.set_image(url="attachment://squad_pitch.png")
+        embed.set_footer(text="Tactical pitch lineup based on FC 27 OVR ratings and position profiling")
+        await interaction.followup.send(embed=embed, file=pitch_file)
+
+    @tree.command(
+        name="totw",
+        description="Display the Team of the Week tactical pitch lineup",
+    )
+    async def totw(interaction: discord.Interaction) -> None:
+        await interaction.response.defer(thinking=True)
+        records = await excel_manager.get_leaderboard_from_sheet()
+        all_matches = await excel_manager.get_all_matches()
+        if not records:
+            await interaction.followup.send("📋 No player records found to generate Team of the Week.")
+            return
+
+        lineup = calculate_squad_lineup(records, all_matches)
+        pitch_buf = render_squad_pitch(lineup, title="CO-OP TEAM OF THE WEEK (TOTW)")
+        pitch_file = discord.File(fp=pitch_buf, filename="totw_pitch.png")
+
+        embed = discord.Embed(
+            title="🌟 Co-op Team of the Week (TOTW)",
+            description=f"**Squad Average OVR:** ⭐ **{lineup['avg_ovr']}**\nCalibrated from latest performances and FC 27 form.",
+            color=discord.Color.gold(),
+            timestamp=datetime.now(),
+        )
+        embed.set_image(url="attachment://totw_pitch.png")
+        embed.set_footer(text="EA FC 27 Team of the Week • Starting Tactical Formation")
+        await interaction.followup.send(embed=embed, file=pitch_file)
+
+    @tree.command(
+        name="duo-card",
+        description="Display an EA FC Dynamic Duo dual card showcasing chemistry, synergy, and partnership stats",
+    )
+    @app_commands.describe(
+        player1="Name of the first partner",
+        player2="Name of the second partner",
+    )
+    async def duo_card(interaction: discord.Interaction, player1: str, player2: str) -> None:
+        await interaction.response.defer(thinking=True)
+        records = await excel_manager.get_leaderboard_from_sheet()
+        all_matches = await excel_manager.get_all_matches()
+
+        try:
+            duo_data = calculate_duo_card_stats(player1, player2, records, all_matches)
+        except ValueError as e:
+            await interaction.followup.send(f"⚠️ {e}")
+            return
+        except Exception as e:
+            logger.exception("Failed to calculate duo card stats")
+            await interaction.followup.send(f"⚠️ An error occurred while generating the duo card: {e}")
+            return
+
+        chart_buf = render_duo_card(duo_data)
+        chart_file = discord.File(fp=chart_buf, filename="dynamic_duo.png")
+
+        c1 = duo_data["card1"]
+        c2 = duo_data["card2"]
+
+        embed = discord.Embed(
+            title=f"✨ Dynamic Duo: {duo_data['player1']} & {duo_data['player2']}",
+            description=(
+                f"**{duo_data['title']}** ({duo_data['synergy_tier']} Chemistry)\n\n"
+                f"🤝 **Matches as Duo:** {duo_data['matches_together']}\n"
+                f"🏆 **Win Rate Together:** **{duo_data['win_rate']:.1f}%** ({duo_data['wins_together']}W - {duo_data['draws_together']}D - {duo_data['losses_together']}L)\n"
+                f"⚽ **Combined G/A:** **{duo_data['combined_ga']}** ({duo_data['combined_goals']} Goals, {duo_data['combined_assists']} Assists)\n"
+                f"🧤 **Clean Sheets:** {duo_data['clean_sheets_together']}\n"
+                f"⭐ **Duo Average OVR:** **{duo_data['avg_ovr']}** ({c1['player']} {c1['rating']} | {c2['player']} {c2['rating']})"
+            ),
+            color=discord.Color.from_rgb(*duo_data["synergy_color"]),
+            timestamp=datetime.now(),
+        )
+        embed.set_image(url="attachment://dynamic_duo.png")
+        embed.set_footer(text="EA FC 27 Dynamic Duo • Special Partnership Chemistry Card")
+        await interaction.followup.send(embed=embed, file=chart_file)
+
+    @tree.command(
         name="rivalry",
         description="Head-to-head grudge match tracker when two players clashed on opposing teams",
     )
@@ -2742,108 +2869,93 @@ def register_commands(
         await interaction.followup.send(embed=embed)
 
     @tree.command(
-        name="duo-card",
-        description="Display an EA FC Dynamic Duo dual card showcasing chemistry, synergy, and partnership stats",
+        name="predict",
+        description="Predict the outcome and exact score of the upcoming match",
     )
     @app_commands.describe(
-        player1="Name of the first partner",
-        player2="Name of the second partner",
+        outcome="Match outcome prediction (Home Win, Away Win, or Draw)",
+        score="Optional exact scoreline prediction (e.g. '3-1', '2-2')",
     )
-    async def duo_card(interaction: discord.Interaction, player1: str, player2: str) -> None:
-        await interaction.response.defer(thinking=True)
-        records = await excel_manager.get_leaderboard_from_sheet()
-        all_matches = await excel_manager.get_all_matches()
+    @app_commands.choices(
+        outcome=[
+            app_commands.Choice(name="Home Win", value="Home Win"),
+            app_commands.Choice(name="Away Win", value="Away Win"),
+            app_commands.Choice(name="Draw", value="Draw"),
+        ]
+    )
+    async def predict(
+        interaction: discord.Interaction,
+        outcome: app_commands.Choice[str],
+        score: Optional[str] = None,
+    ) -> None:
+        user_id = interaction.user.id
+        user_name = interaction.user.display_name
 
         try:
-            duo_data = calculate_duo_card_stats(player1, player2, records, all_matches)
-        except ValueError as e:
-            await interaction.followup.send(f"⚠️ {e}")
-            return
+            entry = PREDICTIONS_MANAGER.set_prediction(
+                user_id=user_id,
+                user_name=user_name,
+                outcome=outcome.value,
+                score=score,
+            )
         except Exception as e:
-            logger.exception("Failed to calculate duo card stats")
-            await interaction.followup.send(f"⚠️ An error occurred while generating the duo card: {e}")
+            logger.exception("Failed to record prediction")
+            await interaction.response.send_message(f"⚠️ Error saving prediction: {e}", ephemeral=True)
             return
 
-        chart_buf = render_duo_card(duo_data)
-        chart_file = discord.File(fp=chart_buf, filename="dynamic_duo.png")
-
-        c1 = duo_data["card1"]
-        c2 = duo_data["card2"]
-
+        score_text = f" with score **{entry['score']}**" if entry["score"] else ""
         embed = discord.Embed(
-            title=f"✨ Dynamic Duo: {duo_data['player1']} & {duo_data['player2']}",
+            title="🎯 Prediction Locked In!",
             description=(
-                f"**{duo_data['title']}** ({duo_data['synergy_tier']} Chemistry)\n\n"
-                f"🤝 **Matches as Duo:** {duo_data['matches_together']}\n"
-                f"🏆 **Win Rate Together:** **{duo_data['win_rate']:.1f}%** ({duo_data['wins_together']}W - {duo_data['draws_together']}D - {duo_data['losses_together']}L)\n"
-                f"⚽ **Combined G/A:** **{duo_data['combined_ga']}** ({duo_data['combined_goals']} Goals, {duo_data['combined_assists']} Assists)\n"
-                f"🧤 **Clean Sheets:** {duo_data['clean_sheets_together']}\n"
-                f"⭐ **Duo Average OVR:** **{duo_data['avg_ovr']}** ({c1['player']} {c1['rating']} | {c2['player']} {c2['rating']})"
+                f"**{user_name}** predicted **{entry['outcome']}**{score_text} for the upcoming match!\n\n"
+                "**Scoring Rules:**\n"
+                "• **+1 pt** for correct match outcome (Home / Away / Draw)\n"
+                "• **+3 bonus pts** for exact scoreline (+4 pts total!)\n\n"
+                "*Points will be awarded automatically once the match screenshot is saved.*"
             ),
-            color=discord.Color.from_rgb(*duo_data["synergy_color"]),
+            color=discord.Color.green(),
             timestamp=datetime.now(),
         )
-        embed.set_image(url="attachment://dynamic_duo.png")
-        embed.set_footer(text="EA FC 27 Dynamic Duo • Special Partnership Chemistry Card")
-        await interaction.followup.send(embed=embed, file=chart_file)
+        embed.set_footer(text="Use /predictions-leaderboard to check server standings")
+        await interaction.response.send_message(embed=embed)
 
     @tree.command(
-        name="squad",
-        description="Display the starting lineup and tactical pitch view of the co-op squad",
+        name="predictions-leaderboard",
+        description="View the server matchday predictions leaderboard and standing points",
     )
-    async def squad(interaction: discord.Interaction) -> None:
-        await interaction.response.defer(thinking=True)
-        records = await excel_manager.get_leaderboard_from_sheet()
-        all_matches = await excel_manager.get_all_matches()
-        if not records:
-            await interaction.followup.send("📋 No player records found to generate a squad lineup.")
-            return
-
-        lineup = calculate_squad_lineup(records, all_matches)
-        pitch_buf = render_squad_pitch(lineup, title="CO-OP STARTING XI & SQUAD PITCH")
-        pitch_file = discord.File(fp=pitch_buf, filename="squad_pitch.png")
-
-        att_str = ", ".join(f"**{p['player']}** ({p['rating']})" for p in lineup["attackers"]) or "None"
-        mid_str = ", ".join(f"**{p['player']}** ({p['rating']})" for p in lineup["midfielders"]) or "None"
-        def_str = ", ".join(f"**{p['player']}** ({p['rating']})" for p in lineup["defenders"]) or "None"
+    async def predictions_leaderboard(interaction: discord.Interaction) -> None:
+        standings = PREDICTIONS_MANAGER.get_leaderboard()
+        pending = PREDICTIONS_MANAGER.get_all_pending()
 
         embed = discord.Embed(
-            title="⚽ Co-op Squad Starting Lineup",
-            description=(
-                f"**Average OVR:** ⭐ **{lineup['avg_ovr']}** • **Squad Size:** {lineup['squad_size']} Players\n\n"
-                f"⚔️ **Attackers:** {att_str}\n"
-                f"🎯 **Midfielders:** {mid_str}\n"
-                f"🛡️ **Defenders:** {def_str}"
-            ),
-            color=discord.Color.brand_green(),
-            timestamp=datetime.now(),
-        )
-        embed.set_image(url="attachment://squad_pitch.png")
-        embed.set_footer(text="Tactical pitch lineup based on FC 27 OVR ratings and position profiling")
-        await interaction.followup.send(embed=embed, file=pitch_file)
-
-    @tree.command(
-        name="totw",
-        description="Display the Team of the Week tactical pitch lineup",
-    )
-    async def totw(interaction: discord.Interaction) -> None:
-        await interaction.response.defer(thinking=True)
-        records = await excel_manager.get_leaderboard_from_sheet()
-        all_matches = await excel_manager.get_all_matches()
-        if not records:
-            await interaction.followup.send("📋 No player records found to generate Team of the Week.")
-            return
-
-        lineup = calculate_squad_lineup(records, all_matches)
-        pitch_buf = render_squad_pitch(lineup, title="CO-OP TEAM OF THE WEEK (TOTW)")
-        pitch_file = discord.File(fp=pitch_buf, filename="totw_pitch.png")
-
-        embed = discord.Embed(
-            title="🌟 Co-op Team of the Week (TOTW)",
-            description=f"**Squad Average OVR:** ⭐ **{lineup['avg_ovr']}**\nCalibrated from latest performances and FC 27 form.",
+            title="🏆 Matchday Predictions Standings",
             color=discord.Color.gold(),
             timestamp=datetime.now(),
         )
-        embed.set_image(url="attachment://totw_pitch.png")
-        embed.set_footer(text="EA FC 27 Team of the Week • Starting Tactical Formation")
-        await interaction.followup.send(embed=embed, file=pitch_file)
+
+        if not standings:
+            embed.description = "No predictions have been scored yet! Use `/predict` to make your pick for the next match."
+        else:
+            lines = []
+            medals = ["🥇", "🥈", "🥉"]
+            for idx, s in enumerate(standings[:10], start=1):
+                icon = medals[idx - 1] if idx <= 3 else f"`#{idx}`"
+                lines.append(
+                    f"{icon} **{s['user_name']}** — **{s['points']} pts** "
+                    f"({s['correct_outcomes']} correct, {s['exact_scores']} exact / {s['total_predictions']} picks)"
+                )
+            embed.description = "\n".join(lines)
+
+        if pending:
+            p_lines = [
+                f"• **{p['user_name']}**: {p['outcome']}" + (f" ({p['score']})" if p.get("score") else "")
+                for p in pending
+            ]
+            embed.add_field(
+                name=f"⏳ Pending Picks for Next Match ({len(pending)})",
+                value="\n".join(p_lines),
+                inline=False,
+            )
+
+        embed.set_footer(text="Scoring: +1 pt correct outcome, +3 bonus pts exact score")
+        await interaction.response.send_message(embed=embed)

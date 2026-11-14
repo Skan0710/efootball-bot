@@ -62,10 +62,12 @@ def test_command_registration_names(test_config: BotConfig, tmp_path: Path) -> N
         "recap",
         "trophies",
         "tierlist",
-        "rivalry",
-        "duo-card",
         "squad",
         "totw",
+        "duo-card",
+        "rivalry",
+        "predict",
+        "predictions-leaderboard",
     }
     assert registered_names == expected_commands
 

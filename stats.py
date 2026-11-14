@@ -450,6 +450,26 @@ def compute_player_rating(record: dict | PlayerAggregateRecord) -> float:
     return round(0.4 * wr + 15.0 * gapg + 5.0 * gpg, 2)
 
 
+def compute_player_card_ovr(
+    record: dict | PlayerAggregateRecord,
+    squad_baseline: float = 72.0,
+    damping_k: float = 3.5,
+) -> int:
+    """Computes the official confidence-weighted FC 27 Card OVR rating (60–99)."""
+    if isinstance(record, dict):
+        mp = int(record.get("matches_played", 0))
+    else:
+        mp = int(record.matches_played)
+
+    if mp <= 0:
+        return 60
+
+    raw_rating = compute_player_rating(record)
+    raw_ovr = 60.0 + 0.38 * raw_rating
+    weighted_ovr = ((mp / (mp + damping_k)) * raw_ovr) + ((damping_k / (mp + damping_k)) * squad_baseline)
+    return int(max(60, min(99, round(weighted_ovr))))
+
+
 def generate_fair_teams(
     player_names: List[str],
     leaderboard_records: List[dict],
@@ -474,14 +494,14 @@ def generate_fair_teams(
     ratings_by_key: Dict[str, float] = {}
     ranked_ratings: List[float] = []
     for rec in leaderboard_records:
-        r_val = compute_player_rating(rec)
+        r_val = float(compute_player_card_ovr(rec))
         key = canonicalize_player_name(str(rec.get("player", ""))).lower()
         if key:
             ratings_by_key[key] = r_val
         if int(rec.get("matches_played", 0)) > 0:
             ranked_ratings.append(r_val)
 
-    default_rating = round(sum(ranked_ratings) / len(ranked_ratings), 2) if ranked_ratings else 40.0
+    default_rating = round(sum(ranked_ratings) / len(ranked_ratings), 1) if ranked_ratings else 70.0
 
     player_entries = [
         {
@@ -931,15 +951,7 @@ def calculate_player_card_stats(
         wins = int(round((win_rate / 100.0) * mp))
     clean_sheets = int(record.get("clean_sheets", 0))
 
-    raw_rating = compute_player_rating(record)
-    # Bayesian / Confidence-Weighted OVR:
-    # Blend raw player performance with squad baseline (72.0) using damping factor K = 3.5 matches.
-    # Debutants with 1 match can no longer jump directly to 96+ OVR without sustained consistency.
-    squad_baseline = 72.0
-    damping_k = 3.5
-    raw_ovr = 60.0 + 0.38 * raw_rating
-    weighted_ovr = ((mp / (mp + damping_k)) * raw_ovr) + ((damping_k / (mp + damping_k)) * squad_baseline)
-    rating = int(max(60, min(99, round(weighted_ovr)))) if mp > 0 else 60
+    rating = compute_player_card_ovr(record)
 
     pace = int(max(71, min(99, round(71.0 + (rating - 60) * (28.0 / 39.0)))))
 
