@@ -41,6 +41,7 @@ from stats import (
     calculate_player_trophies,
     calculate_potm_rankings,
     calculate_potw_rankings,
+    compute_player_card_ovr,
     calculate_session_recap,
     compute_player_rating,
     extract_match_scores,
@@ -988,20 +989,20 @@ def build_fair_teams_embed(split: dict, player_count: int) -> discord.Embed:
         lines = []
         for p in players:
             tag = " (Unranked)" if p.get("is_unranked") else ""
-            lines.append(f"• **{p['player']}** — {p['rating']:.1f} rating{tag}")
+            lines.append(f"• **{p['player']}** — {int(round(p['rating']))} OVR{tag}")
         return "\n\n".join(lines)
 
     embed.add_field(
-        name=f"🔵 Team A (Total: {split['team_a_rating']:.1f})",
+        name=f"🔵 Team A (Avg OVR: {round(split['team_a_rating'] / len(split['team_a']), 1)})",
         value=_fmt_side(split["team_a"]),
         inline=True,
     )
     embed.add_field(
-        name=f"🔴 Team B (Total: {split['team_b_rating']:.1f})",
+        name=f"🔴 Team B (Avg OVR: {round(split['team_b_rating'] / len(split['team_b']), 1)})",
         value=_fmt_side(split["team_b"]),
         inline=True,
     )
-    embed.set_footer(text="Rating = 0.4×Win% + 15×GAPG + 5×GPG • Balanced from Excel history")
+    embed.set_footer(text="OVR = Confidence-Weighted FC 27 Card Rating (60–99) • Balanced from Excel history")
     return embed
 
 
@@ -2193,8 +2194,8 @@ def register_commands(
             )
             return
 
-        rating1 = compute_player_rating(r1)
-        rating2 = compute_player_rating(r2)
+        rating1 = compute_player_card_ovr(r1)
+        rating2 = compute_player_card_ovr(r2)
 
         def _cmp_line(label: str, v1: float | int, v2: float | int, fmt: str = "d") -> str:
             s1 = f"{v1:{fmt}}"
@@ -2216,7 +2217,7 @@ def register_commands(
             _cmp_line("APG", r1["apg"], r2["apg"], ".2f"),
             _cmp_line("GAPG", r1["gapg"], r2["gapg"], ".2f"),
             _cmp_line("Hattricks", r1.get("hattricks", 0), r2.get("hattricks", 0)),
-            _cmp_line("Skill Rating", rating1, rating2, ".1f"),
+            _cmp_line("Card OVR", rating1, rating2, "d"),
         ]
 
         embed = discord.Embed(

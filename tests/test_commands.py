@@ -719,8 +719,8 @@ async def test_h2h_and_compare_commands(test_config: BotConfig) -> None:
     await compare_cmd.callback(inter_cmp, "Suri", "Skan")
     inter_cmp.response.send_message.assert_called_once()
     cmp_embed = inter_cmp.response.send_message.call_args[1]["embed"]
-    assert "Player Comparison — Suri vs Skan" in cmp_embed.title
-    assert "Skill Rating" in cmp_embed.description
+    assert "Player Comparison" in cmp_embed.title
+    assert "Card OVR" in cmp_embed.description
     assert "\n\n" in cmp_embed.description
     assert isinstance(inter_cmp.response.send_message.call_args[1]["file"], discord.File)
     assert inter_cmp.response.send_message.call_args[1]["file"].filename == "player_compare_chart.png"

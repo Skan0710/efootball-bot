@@ -493,16 +493,20 @@ def render_match_summary_card(
         y = 180
         for p in players[:4]:
             pfp_path = _find_player_pfp(p.player)
-            # Draw player avatar dot
-            circle_x = start_x - 12 if align_right else start_x + 12
-            draw.ellipse([(circle_x - 10, y - 2), (circle_x + 10, y + 18)], fill=(38, 50, 80), outline=cyan, width=1)
+            # Draw player avatar box (Square display, fitted without crop/zoom)
+            box_x = start_x - 12 if align_right else start_x + 12
+            draw.rounded_rectangle([(box_x - 10, y - 2), (box_x + 10, y + 18)], radius=3, fill=(38, 50, 80), outline=cyan, width=1)
             if pfp_path:
                 try:
                     with Image.open(pfp_path) as im:
-                        im_sq = ImageOps.fit(im.convert("RGBA"), (20, 20))
-                        c_mask = Image.new("L", (20, 20), 0)
-                        ImageDraw.Draw(c_mask).ellipse([(0, 0), (19, 19)], fill=255)
-                        img.paste(im_sq, (circle_x - 10, y - 2), c_mask)
+                        im_rgba = im.convert("RGBA")
+                        iw, ih = im_rgba.size
+                        scale = min(20 / max(iw, 1), 20 / max(ih, 1))
+                        nw, nh = max(1, int(round(iw * scale))), max(1, int(round(ih * scale)))
+                        resized = im_rgba.resize((nw, nh), Image.Resampling.LANCZOS)
+                        px = (box_x - 10) + (20 - nw) // 2
+                        py_pos = (y - 2) + (20 - nh) // 2
+                        img.paste(resized, (px, py_pos), mask=resized)
                 except Exception:
                     pass
 
@@ -566,14 +570,18 @@ def render_tierlist_card(tiers: Dict[str, List[dict]]) -> io.BytesIO:
         for m in members[:6]:
             pfp_path = _find_player_pfp(m["player"])
             cx, cy = item_x + 22, y + 34
-            draw.ellipse([(cx - 20, cy - 20), (cx + 20, cy + 20)], fill=(34, 44, 70), outline=col, width=2)
+            draw.rounded_rectangle([(cx - 20, cy - 20), (cx + 20, cy + 20)], radius=6, fill=(34, 44, 70), outline=col, width=2)
             if pfp_path:
                 try:
                     with Image.open(pfp_path) as im:
-                        im_sq = ImageOps.fit(im.convert("RGBA"), (40, 40))
-                        c_mask = Image.new("L", (40, 40), 0)
-                        ImageDraw.Draw(c_mask).ellipse([(0, 0), (39, 39)], fill=255)
-                        img.paste(im_sq, (cx - 20, cy - 20), c_mask)
+                        im_rgba = im.convert("RGBA")
+                        iw, ih = im_rgba.size
+                        scale = min(38 / max(iw, 1), 38 / max(ih, 1))
+                        nw, nh = max(1, int(round(iw * scale))), max(1, int(round(ih * scale)))
+                        resized = im_rgba.resize((nw, nh), Image.Resampling.LANCZOS)
+                        px = (cx - 19) + (38 - nw) // 2
+                        py_pos = (cy - 19) + (38 - nh) // 2
+                        img.paste(resized, (px, py_pos), mask=resized)
                 except Exception:
                     pass
             # OVR pill badge on top of avatar
@@ -723,16 +731,20 @@ def render_match_summary_card(
         y = 180
         for p in players[:4]:
             pfp_path = _find_player_pfp(p.player)
-            # Draw player avatar dot
-            circle_x = start_x - 12 if align_right else start_x + 12
-            draw.ellipse([(circle_x - 10, y - 2), (circle_x + 10, y + 18)], fill=(38, 50, 80), outline=cyan, width=1)
+            # Draw player avatar box (Square display, fitted without crop/zoom)
+            box_x = start_x - 12 if align_right else start_x + 12
+            draw.rounded_rectangle([(box_x - 10, y - 2), (box_x + 10, y + 18)], radius=3, fill=(38, 50, 80), outline=cyan, width=1)
             if pfp_path:
                 try:
                     with Image.open(pfp_path) as im:
-                        im_sq = ImageOps.fit(im.convert("RGBA"), (20, 20))
-                        c_mask = Image.new("L", (20, 20), 0)
-                        ImageDraw.Draw(c_mask).ellipse([(0, 0), (19, 19)], fill=255)
-                        img.paste(im_sq, (circle_x - 10, y - 2), c_mask)
+                        im_rgba = im.convert("RGBA")
+                        iw, ih = im_rgba.size
+                        scale = min(20 / max(iw, 1), 20 / max(ih, 1))
+                        nw, nh = max(1, int(round(iw * scale))), max(1, int(round(ih * scale)))
+                        resized = im_rgba.resize((nw, nh), Image.Resampling.LANCZOS)
+                        px = (box_x - 10) + (20 - nw) // 2
+                        py_pos = (y - 2) + (20 - nh) // 2
+                        img.paste(resized, (px, py_pos), mask=resized)
                 except Exception:
                     pass
 
@@ -796,14 +808,18 @@ def render_tierlist_card(tiers: Dict[str, List[dict]]) -> io.BytesIO:
         for m in members[:6]:
             pfp_path = _find_player_pfp(m["player"])
             cx, cy = item_x + 22, y + 34
-            draw.ellipse([(cx - 20, cy - 20), (cx + 20, cy + 20)], fill=(34, 44, 70), outline=col, width=2)
+            draw.rounded_rectangle([(cx - 20, cy - 20), (cx + 20, cy + 20)], radius=6, fill=(34, 44, 70), outline=col, width=2)
             if pfp_path:
                 try:
                     with Image.open(pfp_path) as im:
-                        im_sq = ImageOps.fit(im.convert("RGBA"), (40, 40))
-                        c_mask = Image.new("L", (40, 40), 0)
-                        ImageDraw.Draw(c_mask).ellipse([(0, 0), (39, 39)], fill=255)
-                        img.paste(im_sq, (cx - 20, cy - 20), c_mask)
+                        im_rgba = im.convert("RGBA")
+                        iw, ih = im_rgba.size
+                        scale = min(38 / max(iw, 1), 38 / max(ih, 1))
+                        nw, nh = max(1, int(round(iw * scale))), max(1, int(round(ih * scale)))
+                        resized = im_rgba.resize((nw, nh), Image.Resampling.LANCZOS)
+                        px = (cx - 19) + (38 - nw) // 2
+                        py_pos = (cy - 19) + (38 - nh) // 2
+                        img.paste(resized, (px, py_pos), mask=resized)
                 except Exception:
                     pass
             # OVR pill badge on top of avatar
