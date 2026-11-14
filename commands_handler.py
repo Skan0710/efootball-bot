@@ -38,6 +38,7 @@ from stats import (
     calculate_player_chemistry,
     calculate_player_form,
     calculate_duo_card_stats,
+    calculate_squad_lineup,
     calculate_player_rivalry,
     calculate_player_tierlist,
     calculate_player_trophies,
@@ -55,6 +56,7 @@ from stats import (
 from visuals import (
     render_compare_chart,
     render_duo_card,
+    render_squad_pitch,
     render_fc27_card,
     render_form_chart,
     render_match_summary_card,
@@ -2784,3 +2786,64 @@ def register_commands(
         embed.set_image(url="attachment://dynamic_duo.png")
         embed.set_footer(text="EA FC 27 Dynamic Duo • Special Partnership Chemistry Card")
         await interaction.followup.send(embed=embed, file=chart_file)
+
+    @tree.command(
+        name="squad",
+        description="Display the starting lineup and tactical pitch view of the co-op squad",
+    )
+    async def squad(interaction: discord.Interaction) -> None:
+        await interaction.response.defer(thinking=True)
+        records = await excel_manager.get_leaderboard_from_sheet()
+        all_matches = await excel_manager.get_all_matches()
+        if not records:
+            await interaction.followup.send("📋 No player records found to generate a squad lineup.")
+            return
+
+        lineup = calculate_squad_lineup(records, all_matches)
+        pitch_buf = render_squad_pitch(lineup, title="CO-OP STARTING XI & SQUAD PITCH")
+        pitch_file = discord.File(fp=pitch_buf, filename="squad_pitch.png")
+
+        att_str = ", ".join(f"**{p['player']}** ({p['rating']})" for p in lineup["attackers"]) or "None"
+        mid_str = ", ".join(f"**{p['player']}** ({p['rating']})" for p in lineup["midfielders"]) or "None"
+        def_str = ", ".join(f"**{p['player']}** ({p['rating']})" for p in lineup["defenders"]) or "None"
+
+        embed = discord.Embed(
+            title="⚽ Co-op Squad Starting Lineup",
+            description=(
+                f"**Average OVR:** ⭐ **{lineup['avg_ovr']}** • **Squad Size:** {lineup['squad_size']} Players\n\n"
+                f"⚔️ **Attackers:** {att_str}\n"
+                f"🎯 **Midfielders:** {mid_str}\n"
+                f"🛡️ **Defenders:** {def_str}"
+            ),
+            color=discord.Color.brand_green(),
+            timestamp=datetime.now(),
+        )
+        embed.set_image(url="attachment://squad_pitch.png")
+        embed.set_footer(text="Tactical pitch lineup based on FC 27 OVR ratings and position profiling")
+        await interaction.followup.send(embed=embed, file=pitch_file)
+
+    @tree.command(
+        name="totw",
+        description="Display the Team of the Week tactical pitch lineup",
+    )
+    async def totw(interaction: discord.Interaction) -> None:
+        await interaction.response.defer(thinking=True)
+        records = await excel_manager.get_leaderboard_from_sheet()
+        all_matches = await excel_manager.get_all_matches()
+        if not records:
+            await interaction.followup.send("📋 No player records found to generate Team of the Week.")
+            return
+
+        lineup = calculate_squad_lineup(records, all_matches)
+        pitch_buf = render_squad_pitch(lineup, title="CO-OP TEAM OF THE WEEK (TOTW)")
+        pitch_file = discord.File(fp=pitch_buf, filename="totw_pitch.png")
+
+        embed = discord.Embed(
+            title="🌟 Co-op Team of the Week (TOTW)",
+            description=f"**Squad Average OVR:** ⭐ **{lineup['avg_ovr']}**\nCalibrated from latest performances and FC 27 form.",
+            color=discord.Color.gold(),
+            timestamp=datetime.now(),
+        )
+        embed.set_image(url="attachment://totw_pitch.png")
+        embed.set_footer(text="EA FC 27 Team of the Week • Starting Tactical Formation")
+        await interaction.followup.send(embed=embed, file=pitch_file)

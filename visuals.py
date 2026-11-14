@@ -957,3 +957,108 @@ def render_duo_card(duo: dict) -> io.BytesIO:
     img.save(out, format="PNG")
     out.seek(0)
     return out
+
+
+def render_squad_pitch(lineup: dict, title: str = "SERVER STARTING LINEUP") -> io.BytesIO:
+    """Renders a tactical pitch visualizer showing starting lineup positioning and player badges."""
+    width, height = 820, 620
+    img = Image.new("RGBA", (width, height), (15, 20, 32))
+    draw = ImageDraw.Draw(img)
+
+    px0, py0 = 30, 80
+    px1, py1 = width - 30, height - 25
+    pw = px1 - px0
+    ph = py1 - py0
+
+    stripe_h = 36
+    num_stripes = (ph // stripe_h) + 1
+    for i in range(num_stripes):
+        sy0 = py0 + i * stripe_h
+        sy1 = min(py1, sy0 + stripe_h)
+        col = (24, 76, 42) if (i % 2 == 0) else (20, 66, 36)
+        draw.rectangle([(px0, sy0), (px1, sy1)], fill=col)
+
+    white_line = (255, 255, 255, 175)
+    draw.rectangle([(px0, py0), (px1, py1)], outline=white_line, width=2)
+
+    mid_y = (py0 + py1) // 2
+    draw.line([(px0, mid_y), (px1, mid_y)], fill=white_line, width=2)
+
+    cx = (px0 + px1) // 2
+    draw.ellipse([(cx - 55, mid_y - 55), (cx + 55, mid_y + 55)], outline=white_line, width=2)
+    draw.ellipse([(cx - 4, mid_y - 4), (cx + 4, mid_y + 4)], fill=white_line)
+
+    draw.rectangle([(cx - 100, py0), (cx + 100, py0 + 65)], outline=white_line, width=2)
+    draw.rectangle([(cx - 50, py0), (cx + 50, py0 + 25)], outline=white_line, width=2)
+
+    draw.rectangle([(cx - 100, py1 - 65), (cx + 100, py1)], outline=white_line, width=2)
+    draw.rectangle([(cx - 50, py1 - 25), (cx + 50, py1)], outline=white_line, width=2)
+
+    draw.rounded_rectangle([(px0, 14), (px1, 68)], radius=12, fill=(18, 24, 40), outline=(42, 56, 88), width=2)
+    draw.text((width // 2, 33), title.upper(), font=_load_font(20, bold=True), fill=(236, 193, 92), anchor="mm")
+    sub_title = f"Squad Average: {lineup.get('avg_ovr', 75)} OVR • {lineup.get('squad_size', 0)} Active Teammates"
+    draw.text((width // 2, 54), sub_title, font=_load_font(12, bold=False), fill=(160, 172, 198), anchor="mm")
+
+    def _draw_player_node(player_card: dict, node_x: int, node_y: int):
+        box_s = 48
+        half_s = box_s // 2
+
+        draw.rectangle(
+            [(node_x - half_s - 2, node_y - half_s - 2), (node_x + half_s + 2, node_y + half_s + 2)],
+            fill=(18, 24, 40),
+            outline=(236, 193, 92),
+            width=2,
+        )
+
+        pfp_path = _find_player_pfp(str(player_card["player"]))
+        rendered = False
+        if pfp_path:
+            try:
+                with Image.open(pfp_path) as p_img:
+                    p_rgba = p_img.convert("RGBA")
+                    w, h = p_rgba.size
+                    scale = min(box_s / max(w, 1), box_s / max(h, 1))
+                    nw = max(1, int(round(w * scale)))
+                    nh = max(1, int(round(h * scale)))
+                    resized = p_rgba.resize((nw, nh), Image.Resampling.LANCZOS)
+                    draw.rectangle([(node_x - half_s, node_y - half_s), (node_x + half_s, node_y + half_s)], fill=(10, 14, 24))
+                    img.paste(resized, (node_x - half_s + (box_s - nw) // 2, node_y - half_s + (box_s - nh) // 2), mask=resized)
+                    rendered = True
+            except Exception:
+                rendered = False
+
+        if not rendered:
+            draw.rectangle([(node_x - half_s, node_y - half_s), (node_x + half_s, node_y + half_s)], fill=(14, 20, 34))
+            draw.text((node_x, node_y), str(player_card["player"])[:2].upper(), font=_load_font(18, bold=True), fill=(236, 193, 92), anchor="mm")
+
+        draw.rounded_rectangle([(node_x - half_s - 14, node_y - half_s - 8), (node_x - half_s + 8, node_y - half_s + 10)], radius=4, fill=(15, 23, 42), outline=(56, 189, 248), width=1)
+        draw.text((node_x - half_s - 3, node_y - half_s + 1), str(player_card["position"]), font=_load_font(9, bold=True), fill=(56, 189, 248), anchor="mm")
+
+        draw.rounded_rectangle([(node_x + half_s - 8, node_y - half_s - 8), (node_x + half_s + 14, node_y - half_s + 10)], radius=4, fill=(15, 23, 42), outline=(236, 193, 92), width=1)
+        draw.text((node_x + half_s + 3, node_y - half_s + 1), str(player_card["rating"]), font=_load_font(10, bold=True), fill=(250, 204, 21), anchor="mm")
+
+        p_name = str(player_card["player"])
+        nw_pill = max(60, len(p_name) * 8 + 14)
+        draw.rounded_rectangle([(node_x - nw_pill // 2, node_y + half_s + 4), (node_x + nw_pill // 2, node_y + half_s + 20)], radius=5, fill=(10, 14, 24), outline=(42, 54, 88), width=1)
+        draw.text((node_x, node_y + half_s + 12), p_name, font=_load_font(11, bold=True), fill=(248, 250, 252), anchor="mm")
+
+    attackers = lineup.get("attackers", [])
+    midfielders = lineup.get("midfielders", [])
+    defenders = lineup.get("defenders", [])
+
+    def _distribute_row(players: List[dict], y_row: int):
+        count = len(players)
+        if count == 0:
+            return
+        step = pw // (count + 1)
+        for idx, p in enumerate(players, start=1):
+            _draw_player_node(p, px0 + idx * step, y_row)
+
+    _distribute_row(attackers, py0 + int(ph * 0.22))
+    _distribute_row(midfielders, py0 + int(ph * 0.52))
+    _distribute_row(defenders, py0 + int(ph * 0.80))
+
+    out = io.BytesIO()
+    img.save(out, format="PNG")
+    out.seek(0)
+    return out

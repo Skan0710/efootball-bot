@@ -1611,3 +1611,42 @@ def calculate_duo_card_stats(
         "synergy_color": synergy_color,
         "title": title,
     }
+
+
+def calculate_squad_lineup(
+    leaderboard_records: List[dict],
+    matches: List[MatchRecord],
+) -> dict:
+    """Classifies registered players into starting tactical lineup zones."""
+    all_cards = []
+    for r in leaderboard_records:
+        name = str(r.get("player", ""))
+        c = calculate_player_card_stats(name, leaderboard_records, matches)
+        if c and c.get("matches_played", 0) > 0:
+            all_cards.append(c)
+
+    all_cards.sort(key=lambda x: (x["rating"], x["dribbling"] + x["shooting"]), reverse=True)
+
+    attackers = [c for c in all_cards if c["position"] in ("ST", "CF", "LW", "RW")]
+    midfielders = [c for c in all_cards if c["position"] in ("CAM", "CM", "LM", "RM", "CDM")]
+    defenders = [c for c in all_cards if c["position"] in ("CB", "LB", "RB")]
+
+    unassigned = [c for c in all_cards if c not in attackers and c not in midfielders and c not in defenders]
+    for u in unassigned:
+        if u["shooting"] >= 80:
+            attackers.append(u)
+        elif u["defending"] >= 76:
+            defenders.append(u)
+        else:
+            midfielders.append(u)
+
+    avg_ovr = int(round(sum(c["rating"] for c in all_cards) / len(all_cards))) if all_cards else 70
+
+    return {
+        "squad_size": len(all_cards),
+        "avg_ovr": avg_ovr,
+        "attackers": attackers,
+        "midfielders": midfielders,
+        "defenders": defenders,
+        "all_players": all_cards,
+    }
