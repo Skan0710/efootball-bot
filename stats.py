@@ -934,11 +934,19 @@ def _assign_individual_position(
     passing: int,
     dribbling: int,
     defending: int,
+    physical: Optional[int] = None,
 ) -> str:
     """Assigns realistic tactical position for a single player in isolation."""
     key = canonical.strip().lower()
     if key == "harold":
         return "GK"
+
+    phy = physical if physical is not None else int(round((pace + dribbling + 75) / 3.0))
+
+    # Gullit Gang rule: All 6 face attributes >= 80 -> CM by default
+    stats_list = [pace, shooting, passing, dribbling, defending, phy]
+    if all(s >= 80 for s in stats_list):
+        return "CM"
 
     is_midfield = passing >= shooting and passing >= defending
     is_defence = defending >= shooting and defending >= passing
@@ -974,11 +982,13 @@ def assign_roster_positions(
 
     Enforces strict tactical constraints:
     - Special tribute players (Harold) -> 'GK'
+    - Gullit Gang rule: If all 6 face attributes >= 80 -> 'CM' by default (e.g. Suri).
     - Combination of 3 stats (Pace >= 75, Dribbling >= 75, and Def/Sho >= 75):
       - Higher defending -> LB/RB (at most 1 LB and 1 RB across the roster)
       - Higher shooting -> LW/RW (at most 1 LW and 1 RW across the roster)
+    - Single CAM Rule: At most 1 CAM allowed in the squad; the other candidate becomes CM.
     - Combination of 4 stats (Pace, Dribbling, Passing, and Shooting/Defending):
-      - Higher shooting -> CAM
+      - Higher shooting -> CAM (or CM if a CAM already exists)
       - Higher defending -> CDM
     - Combination of 2 stats / Primary region:
       - Defending highest -> CB
@@ -1010,6 +1020,7 @@ def assign_roster_positions(
                 "passing": 99,
                 "dribbling": 99,
                 "defending": 99,
+                "physical": 99,
                 "rating": 99,
             })
             continue
@@ -1047,6 +1058,7 @@ def assign_roster_positions(
         baseline_def = 0.45
         damped_def_efficiency = ((mp / (mp + def_damping_k)) * raw_def_efficiency) + ((def_damping_k / (mp + def_damping_k)) * baseline_def)
         defending = int(max(60, min(99, round(60.0 + 39.0 * damped_def_efficiency))))
+        physical = int(max(60, min(99, round((rating + pace + dribbling) / 3.0))))
 
         raw_players.append({
             "key": key,
@@ -1057,6 +1069,7 @@ def assign_roster_positions(
             "passing": passing,
             "dribbling": dribbling,
             "defending": defending,
+            "physical": physical,
             "rating": rating,
         })
 
@@ -1069,7 +1082,16 @@ def assign_roster_positions(
             positions[p["key"]] = "GK"
             assigned.add(p["key"])
 
-    # 2. Fullbacks (LB / RB) - Exactly max 1 LB and 1 RB across the roster
+    # 2. Gullit Gang: All 6 face attributes >= 80 -> CM by default
+    for p in raw_players:
+        if p["key"] in assigned:
+            continue
+        stats_list = [p["pace"], p["shooting"], p["passing"], p["dribbling"], p["defending"], p["physical"]]
+        if all(s >= 80 for s in stats_list):
+            positions[p["key"]] = "CM"
+            assigned.add(p["key"])
+
+    # 3. Fullbacks (LB / RB) - Exactly max 1 LB and 1 RB across the roster
     fb_candidates = [
         p for p in raw_players
         if p["key"] not in assigned
@@ -1084,7 +1106,7 @@ def assign_roster_positions(
         positions[fb_candidates[1]["key"]] = "RB"
         assigned.add(fb_candidates[1]["key"])
 
-    # 3. Wingers (LW / RW) - Exactly max 1 LW and 1 RW across the roster
+    # 4. Wingers (LW / RW) - Exactly max 1 LW and 1 RW across the roster
     w_candidates = [
         p for p in raw_players
         if p["key"] not in assigned
@@ -1099,28 +1121,40 @@ def assign_roster_positions(
         positions[w_candidates[1]["key"]] = "RW"
         assigned.add(w_candidates[1]["key"])
 
-    # 4. Remaining outfield players: 4 stats (CAM/CDM) or 2 stats (CB/CM/ST)
-    for p in raw_players:
-        k = p["key"]
-        if k in assigned:
-            continue
+    # 5. Remaining outfield players: Single CAM rule & 2 stats (CB/CM/ST)
+    cam_assigned = False
+    unassigned = [p for p in raw_players if p["key"] not in assigned]
+    unassigned.sort(key=lambda p: (p["rating"], p["passing"] + p["shooting"]), reverse=True)
 
+    for p in unassigned:
+        k = p["key"]
         pac, dri, pas = p["pace"], p["dribbling"], p["passing"]
         sho, df = p["shooting"], p["defending"]
 
+        is_midfield = pas >= sho and pas >= df
+        is_defence = df >= sho and df >= pas
+
         # Combination of 4 stats
         is_4stat = (pac >= 75 and dri >= 75 and pas >= 75 and (sho >= 75 or df >= 75)) or (
-            pas >= sho and pas >= df and pas >= 75 and (dri >= 75 or pac >= 75)
+            is_midfield and pac >= 75 and dri >= 75 and (sho >= 75 or df >= 75)
         )
         if is_4stat:
-            positions[k] = "CAM" if sho >= df else "CDM"
+            if sho >= df:
+                if not cam_assigned:
+                    positions[k] = "CAM"
+                    cam_assigned = True
+                else:
+                    # Only 1 CAM allowed! The other person has to be CM
+                    positions[k] = "CM"
+            else:
+                positions[k] = "CDM"
             assigned.add(k)
             continue
 
         # Combination of 2 stats / Region decision
-        if df >= sho and df >= pas:
+        if is_defence:
             positions[k] = "CB"
-        elif pas >= sho and pas >= df:
+        elif is_midfield:
             positions[k] = "CM"
         else:
             positions[k] = "ST"
@@ -1250,6 +1284,7 @@ def calculate_player_card_stats(
             passing=passing,
             dribbling=dribbling,
             defending=defending,
+            physical=physical,
         )
 
     return {
@@ -1855,6 +1890,43 @@ def calculate_duo_card_stats(
     }
 
 
+def order_defenders_lineup(defenders: List[dict]) -> List[dict]:
+    """Positions defenders left-to-right: LB on the left end, CBs in the middle, RB on the right end."""
+    lb = [p for p in defenders if p.get("position") == "LB"]
+    cb = [p for p in defenders if p.get("position") == "CB"]
+    rb = [p for p in defenders if p.get("position") == "RB"]
+    others = [p for p in defenders if p.get("position") not in ("LB", "CB", "RB")]
+    cb_sorted = sorted(cb + others, key=lambda p: (p.get("rating", 0), p.get("defending", 0)), reverse=True)
+    return lb + cb_sorted + rb
+
+
+def order_attackers_lineup(attackers: List[dict]) -> List[dict]:
+    """Positions attackers left-to-right: LW on the left end, STs in the middle, RW on the right end."""
+    lw = [p for p in attackers if p.get("position") == "LW"]
+    st = [p for p in attackers if p.get("position") in ("ST", "CF")]
+    rw = [p for p in attackers if p.get("position") == "RW"]
+    others = [p for p in attackers if p.get("position") not in ("LW", "ST", "CF", "RW")]
+    st_sorted = sorted(st + others, key=lambda p: (p.get("rating", 0), p.get("shooting", 0)), reverse=True)
+    return lw + st_sorted + rw
+
+
+def order_midfielders_lineup(midfielders: List[dict]) -> List[dict]:
+    """Positions midfielders left-to-right: LCM on the left, CAM/CDM in the center, RCM on the right."""
+    cam = [p for p in midfielders if p.get("position") == "CAM"]
+    cdm = [p for p in midfielders if p.get("position") == "CDM"]
+    cm = [p for p in midfielders if p.get("position") == "CM"]
+    others = [p for p in midfielders if p.get("position") not in ("CAM", "CDM", "CM")]
+    all_cm = cm + others
+    # In 4-3-3: LCM, CAM, RCM
+    if cam and len(all_cm) >= 2:
+        return [all_cm[0]] + cam + all_cm[1:]
+    elif cam:
+        return cam + all_cm
+    elif cdm and len(all_cm) >= 2:
+        return [all_cm[0]] + cdm + all_cm[1:]
+    return sorted(midfielders, key=lambda p: p.get("rating", 0), reverse=True)
+
+
 def calculate_squad_lineup(
     leaderboard_records: List[dict],
     matches: List[MatchRecord],
@@ -1866,6 +1938,13 @@ def calculate_squad_lineup(
         c = calculate_player_card_stats(name, leaderboard_records, matches)
         if c and c.get("matches_played", 0) > 0:
             all_cards.append(c)
+
+    # Ensure Harold (99 GK Tribute) is included in starting lineup and TOTW
+    has_harold = any(str(c.get("player", "")).strip().lower() == "harold" for c in all_cards)
+    if not has_harold:
+        harold_card = calculate_player_card_stats("Harold", leaderboard_records, matches)
+        if harold_card:
+            all_cards.append(harold_card)
 
     all_cards.sort(key=lambda x: (x["rating"], x["dribbling"] + x["shooting"]), reverse=True)
 
@@ -1885,6 +1964,11 @@ def calculate_squad_lineup(
             defenders.append(u)
         else:
             midfielders.append(u)
+
+    # Perfectly align positions left-to-right (LB left, RB right, LW left, RW right)
+    defenders = order_defenders_lineup(defenders)
+    midfielders = order_midfielders_lineup(midfielders)
+    attackers = order_attackers_lineup(attackers)
 
     avg_ovr = int(round(sum(c["rating"] for c in all_cards) / len(all_cards))) if all_cards else 70
 

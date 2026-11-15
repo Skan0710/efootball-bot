@@ -114,6 +114,10 @@ def test_attribute_based_positions_and_wing_exclusivity() -> None:
     assert len(lws) <= 1
     assert len(rws) <= 1
 
+    # At most 1 CAM across the entire roster (no 2 CAMs)
+    cams = [p for p, pos in positions_map.items() if pos == "CAM"]
+    assert len(cams) <= 1
+
     # CF, LM, RM must NEVER exist
     all_positions = list(positions_map.values())
     assert "CF" not in all_positions
@@ -131,6 +135,9 @@ def test_isolated_position_rules() -> None:
 
     # Harold
     assert _assign_individual_position("Harold", 99, 99, 99, 99, 99) == "GK"
+
+    # Gullit Gang rule: all 6 attributes >= 80 -> CM by default
+    assert _assign_individual_position("GullitGuy", 88, 85, 84, 86, 82, physical=85) == "CM"
 
     # 3 stats: Pace >= 75, DRI >= 75, DEF >= 75 and DEF >= SHO -> Fullback (LB)
     assert _assign_individual_position("DefWing", 84, 70, 70, 80, 85) == "LB"
@@ -278,8 +285,10 @@ def test_calculate_squad_lineup_and_render() -> None:
     ]
 
     lineup = calculate_squad_lineup(records, matches)
-    assert lineup["squad_size"] == 4
+    assert lineup["squad_size"] == 5
     assert 60 <= lineup["avg_ovr"] <= 99
+    assert len(lineup["goalkeepers"]) == 1
+    assert lineup["goalkeepers"][0]["player"] == "Harold"
     assert len(lineup["attackers"]) + len(lineup["midfielders"]) + len(lineup["defenders"]) == 4
 
     pitch_buf = render_squad_pitch(lineup, title="TEST PITCH")

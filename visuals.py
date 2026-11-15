@@ -233,22 +233,23 @@ def render_fc27_card(card: dict) -> io.BytesIO:
     draw.text((col_x, 70), ovr_text, font=font_ovr, fill=theme["text"], anchor="mm")
     draw.line([(col_x - 30, 108), (col_x + 30, 108)], fill=theme["divider"], width=2)
     draw.text((col_x, 130), str(card["position"]), font=font_pos, fill=theme["text"], anchor="mm")
+    draw.line([(col_x - 24, 150), (col_x + 24, 150)], fill=theme["divider"], width=1)
 
-    # Team Crest / Club Logo placeholder under position
+    # Team Crest / Club Logo placeholder under position (enlarged for clean visibility)
     logo_path = _find_team_logo()
-    logo_y = 172
-    badge_size = 38
+    logo_y = 190
+    badge_size = 58
     half_badge = badge_size // 2
     b_x0, b_y0 = col_x - half_badge, logo_y - half_badge
     b_x1, b_y1 = col_x + half_badge, logo_y + half_badge
 
-    # Logo placeholder frame
+    # Logo placeholder frame with metallic crest styling
     draw.rounded_rectangle(
-        [(b_x0 - 2, b_y0 - 2), (b_x1 + 2, b_y1 + 2)],
-        radius=6,
-        fill=(*theme["bg_bot"], 220),
-        outline=(*theme["divider"], 200),
-        width=1,
+        [(b_x0 - 3, b_y0 - 3), (b_x1 + 3, b_y1 + 3)],
+        radius=8,
+        fill=(*theme["bg_bot"], 235),
+        outline=(*theme["accent"], 220),
+        width=2,
     )
 
     rendered_logo = False
@@ -269,7 +270,7 @@ def render_fc27_card(card: dict) -> io.BytesIO:
             rendered_logo = False
 
     if not rendered_logo:
-        draw.text((col_x, logo_y), "FC", font=_load_font(12, bold=True), fill=theme["subtext"], anchor="mm")
+        draw.text((col_x, logo_y), "FC", font=_load_font(16, bold=True), fill=theme["subtext"], anchor="mm")
 
     # Stylized Avatar / Crest Emblem or Player PFP on center-right (Clean Square Display)
     cx, cy = 266, 198
@@ -950,9 +951,39 @@ def render_squad_pitch(lineup: dict, title: str = "SERVER STARTING LINEUP") -> i
         draw.text((node_x, node_y + half_s + 12), p_name, font=_load_font(11, bold=True), fill=(248, 250, 252), anchor="mm")
 
     goalkeepers = lineup.get("goalkeepers", [])
-    attackers = lineup.get("attackers", [])
-    midfielders = lineup.get("midfielders", [])
-    defenders = lineup.get("defenders", [])
+    raw_attackers = lineup.get("attackers", [])
+    raw_midfielders = lineup.get("midfielders", [])
+    raw_defenders = lineup.get("defenders", [])
+
+    # Strict tactical positioning left-to-right
+    # Defenders: LB on far left, CBs in the middle, RB on far right
+    lb = [p for p in raw_defenders if p.get("position") == "LB"]
+    cb = [p for p in raw_defenders if p.get("position") == "CB"]
+    rb = [p for p in raw_defenders if p.get("position") == "RB"]
+    others_d = [p for p in raw_defenders if p.get("position") not in ("LB", "CB", "RB")]
+    defenders = lb + sorted(cb + others_d, key=lambda p: (p.get("rating", 0), p.get("defending", 0)), reverse=True) + rb
+
+    # Attackers: LW on far left, STs in the middle, RW on far right
+    lw = [p for p in raw_attackers if p.get("position") == "LW"]
+    st = [p for p in raw_attackers if p.get("position") in ("ST", "CF")]
+    rw = [p for p in raw_attackers if p.get("position") == "RW"]
+    others_a = [p for p in raw_attackers if p.get("position") not in ("LW", "ST", "CF", "RW")]
+    attackers = lw + sorted(st + others_a, key=lambda p: (p.get("rating", 0), p.get("shooting", 0)), reverse=True) + rw
+
+    # Midfielders: LCM on the left, CAM/CDM in the center, RCM on the right
+    cam = [p for p in raw_midfielders if p.get("position") == "CAM"]
+    cdm = [p for p in raw_midfielders if p.get("position") == "CDM"]
+    cm = [p for p in raw_midfielders if p.get("position") == "CM"]
+    others_m = [p for p in raw_midfielders if p.get("position") not in ("CAM", "CDM", "CM")]
+    all_cm = cm + others_m
+    if cam and len(all_cm) >= 2:
+        midfielders = [all_cm[0]] + cam + all_cm[1:]
+    elif cam:
+        midfielders = cam + all_cm
+    elif cdm and len(all_cm) >= 2:
+        midfielders = [all_cm[0]] + cdm + all_cm[1:]
+    else:
+        midfielders = sorted(raw_midfielders, key=lambda p: p.get("rating", 0), reverse=True)
 
     def _distribute_row(players: List[dict], y_row: int):
         count = len(players)

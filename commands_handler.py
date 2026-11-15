@@ -2755,9 +2755,23 @@ def register_commands(
         pitch_buf = render_squad_pitch(lineup, title="CO-OP TEAM OF THE WEEK (TOTW)")
         pitch_file = discord.File(fp=pitch_buf, filename="totw_pitch.png")
 
+        gk_str = ", ".join(f"**{p['player']}** ({p['rating']})" for p in lineup.get("goalkeepers", []))
+        att_str = ", ".join(f"**{p['player']}** ({p['rating']})" for p in lineup["attackers"]) or "None"
+        mid_str = ", ".join(f"**{p['player']}** ({p['rating']})" for p in lineup["midfielders"]) or "None"
+        def_str = ", ".join(f"**{p['player']}** ({p['rating']})" for p in lineup["defenders"]) or "None"
+
+        desc = f"**Squad Average OVR:** ⭐ **{lineup['avg_ovr']}** • **4-3-3 Attack Formation**\n\n"
+        if gk_str:
+            desc += f"🧤 **Goalkeeper:** {gk_str}\n"
+        desc += (
+            f"🛡️ **Defenders:** {def_str}\n"
+            f"🎯 **Midfielders:** {mid_str}\n"
+            f"⚔️ **Attackers:** {att_str}"
+        )
+
         embed = discord.Embed(
             title="🌟 Co-op Team of the Week (TOTW)",
-            description=f"**Squad Average OVR:** ⭐ **{lineup['avg_ovr']}**\nCalibrated from latest performances and FC 27 form.",
+            description=desc,
             color=discord.Color.gold(),
             timestamp=datetime.now(),
         )
