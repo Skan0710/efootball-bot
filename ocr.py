@@ -376,7 +376,7 @@ def _extract_via_targeted_regions(
 def extract_via_vision_ai(
     image_path: Path | str,
     api_key: Optional[str] = None,
-    model: str = "llama-3.2-11b-vision-preview",
+    model: str = "qwen/qwen3.8-27b",
     timeout_seconds: float = 30.0,
 ) -> Optional[OCRResult]:
     """Extracts player stats from screenshot using Multimodal AI Vision.
@@ -570,7 +570,7 @@ def extract_player_stats_from_screenshot(
     resolved_key = groq_api_key or os.getenv("GROQ_API_KEY", "").strip() or None
     if resolved_key:
         try:
-            model = groq_model or os.getenv("GROQ_VISION_MODEL", "llama-3.2-11b-vision-preview").strip()
+            model = groq_model or os.getenv("GROQ_VISION_MODEL", "qwen/qwen3.8-27b").strip()
             ai_res = extract_via_vision_ai(path, api_key=resolved_key, model=model)
             if ai_res and ai_res.success and len(ai_res.candidates) > 0:
                 LOGGER.info("Successfully extracted %d players via AI Vision", len(ai_res.candidates))

@@ -61,4 +61,4 @@ def test_load_config_valid_defaults(monkeypatch: pytest.MonkeyPatch, tmp_path: P
     assert cfg.allowed_channel_id is None
     assert cfg.admin_role_id is None
     assert cfg.groq_api_key is None
-    assert cfg.groq_vision_model == "llama-3.2-11b-vision-preview"
+    assert cfg.groq_vision_model == "qwen/qwen3.8-27b"
