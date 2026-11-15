@@ -949,6 +949,7 @@ def render_squad_pitch(lineup: dict, title: str = "SERVER STARTING LINEUP") -> i
         draw.rounded_rectangle([(node_x - nw_pill // 2, node_y + half_s + 4), (node_x + nw_pill // 2, node_y + half_s + 20)], radius=5, fill=(10, 14, 24), outline=(42, 54, 88), width=1)
         draw.text((node_x, node_y + half_s + 12), p_name, font=_load_font(11, bold=True), fill=(248, 250, 252), anchor="mm")
 
+    goalkeepers = lineup.get("goalkeepers", [])
     attackers = lineup.get("attackers", [])
     midfielders = lineup.get("midfielders", [])
     defenders = lineup.get("defenders", [])
@@ -961,9 +962,15 @@ def render_squad_pitch(lineup: dict, title: str = "SERVER STARTING LINEUP") -> i
         for idx, p in enumerate(players, start=1):
             _draw_player_node(p, px0 + idx * step, y_row)
 
-    _distribute_row(attackers, py0 + int(ph * 0.22))
-    _distribute_row(midfielders, py0 + int(ph * 0.52))
-    _distribute_row(defenders, py0 + int(ph * 0.80))
+    if goalkeepers:
+        _distribute_row(attackers, py0 + int(ph * 0.16))
+        _distribute_row(midfielders, py0 + int(ph * 0.42))
+        _distribute_row(defenders, py0 + int(ph * 0.68))
+        _distribute_row(goalkeepers, py0 + int(ph * 0.90))
+    else:
+        _distribute_row(attackers, py0 + int(ph * 0.22))
+        _distribute_row(midfielders, py0 + int(ph * 0.52))
+        _distribute_row(defenders, py0 + int(ph * 0.80))
 
     out = io.BytesIO()
     img.save(out, format="PNG")

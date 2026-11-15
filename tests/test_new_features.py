@@ -75,6 +75,85 @@ def test_harold_tribute_card_and_gk_attributes() -> None:
     assert img.size == (460, 660)
 
 
+def test_attribute_based_positions_and_wing_exclusivity() -> None:
+    """Verifies the new attribute-based position system:
+    - Region comparison (Shooting / Passing / Defending)
+    - 2-stat combinations (CB, CM, ST)
+    - 3-stat combinations with 75+ rule and strict exclusivity (1 LB, 1 RB, 1 LW, 1 RW)
+    - 4-stat combinations (CAM, CDM)
+    - Total elimination of CF, LM, RM
+    """
+    from stats import assign_roster_positions, calculate_player_card_stats, LEGAL_POSITIONS
+
+    # Roster with multiple high-attribute players competing for fullback and winger spots
+    records = [
+        {"player": "PlayerA", "matches_played": 10, "goals": 15, "assists": 5, "gapg": 2.0, "win_rate": 80.0},
+        {"player": "PlayerB", "matches_played": 10, "goals": 14, "assists": 4, "gapg": 1.8, "win_rate": 75.0},
+        {"player": "PlayerC", "matches_played": 10, "goals": 12, "assists": 2, "gapg": 1.4, "win_rate": 70.0},
+        {"player": "PlayerDef1", "matches_played": 10, "goals": 1, "assists": 2, "gapg": 1.5, "win_rate": 90.0, "clean_sheets": 5},
+        {"player": "PlayerDef2", "matches_played": 10, "goals": 0, "assists": 1, "gapg": 1.4, "win_rate": 85.0, "clean_sheets": 4},
+        {"player": "PlayerDef3", "matches_played": 10, "goals": 0, "assists": 0, "gapg": 1.3, "win_rate": 80.0, "clean_sheets": 3},
+        {"player": "MidMaker", "matches_played": 10, "goals": 6, "assists": 12, "gapg": 1.8, "win_rate": 70.0},
+        {"player": "Harold", "matches_played": 99, "goals": 0, "assists": 0, "gapg": 0.0, "win_rate": 100.0},
+    ]
+
+    positions_map = assign_roster_positions(records, [])
+
+    # Harold must always be GK
+    assert positions_map["harold"] == "GK"
+
+    # Only 1 LB and 1 RB across the entire roster
+    lbs = [p for p, pos in positions_map.items() if pos == "LB"]
+    rbs = [p for p, pos in positions_map.items() if pos == "RB"]
+    assert len(lbs) <= 1
+    assert len(rbs) <= 1
+
+    # Only 1 LW and 1 RW across the entire roster
+    lws = [p for p, pos in positions_map.items() if pos == "LW"]
+    rws = [p for p, pos in positions_map.items() if pos == "RW"]
+    assert len(lws) <= 1
+    assert len(rws) <= 1
+
+    # CF, LM, RM must NEVER exist
+    all_positions = list(positions_map.values())
+    assert "CF" not in all_positions
+    assert "LM" not in all_positions
+    assert "RM" not in all_positions
+
+    # All assigned positions must belong to LEGAL_POSITIONS
+    for pos in all_positions:
+        assert pos in LEGAL_POSITIONS
+
+
+def test_isolated_position_rules() -> None:
+    """Verifies isolated player position decision logic across all stat branches."""
+    from stats import _assign_individual_position
+
+    # Harold
+    assert _assign_individual_position("Harold", 99, 99, 99, 99, 99) == "GK"
+
+    # 3 stats: Pace >= 75, DRI >= 75, DEF >= 75 and DEF >= SHO -> Fullback (LB)
+    assert _assign_individual_position("DefWing", 84, 70, 70, 80, 85) == "LB"
+
+    # 3 stats: Pace >= 75, DRI >= 75, SHO >= 75 and SHO >= DEF -> Winger (LW)
+    assert _assign_individual_position("AttWing", 86, 88, 70, 84, 65) == "LW"
+
+    # 4 stats: Pace, DRI, PAS >= 75 and SHO >= DEF -> CAM
+    assert _assign_individual_position("Playmaker", 80, 82, 85, 78, 65) == "CAM"
+
+    # 4 stats: Pace, DRI, PAS >= 75 and DEF > SHO -> CDM
+    assert _assign_individual_position("Anchor", 80, 68, 82, 76, 78) == "CDM"
+
+    # 2 stats: Pace + Defending highest -> CB
+    assert _assign_individual_position("CenterBack", 78, 60, 60, 65, 80) == "CB"
+
+    # 2 stats: Pace + Passing highest -> CM
+    assert _assign_individual_position("CentralMid", 76, 68, 74, 66, 65) == "CM"
+
+    # 2 stats: Pace + Shooting highest -> ST
+    assert _assign_individual_position("Striker", 82, 88, 65, 70, 60) == "ST"
+
+
 def test_calculate_player_rivalry() -> None:
     """Verifies head-to-head clash history and bragging rights calculation."""
     matches = [

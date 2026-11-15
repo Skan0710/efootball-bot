@@ -923,6 +923,218 @@ def calculate_match_motm_and_milestones(
     }
 
 
+LEGAL_OUTFIELD_POSITIONS = {"LB", "CB", "RB", "CDM", "CM", "CAM", "LW", "ST", "RW"}
+LEGAL_POSITIONS = {"GK"} | LEGAL_OUTFIELD_POSITIONS
+
+
+def _assign_individual_position(
+    canonical: str,
+    pace: int,
+    shooting: int,
+    passing: int,
+    dribbling: int,
+    defending: int,
+) -> str:
+    """Assigns realistic tactical position for a single player in isolation."""
+    key = canonical.strip().lower()
+    if key == "harold":
+        return "GK"
+
+    is_midfield = passing >= shooting and passing >= defending
+    is_defence = defending >= shooting and defending >= passing
+    is_attack = not is_midfield and not is_defence
+
+    # 3 stats combination (pace, dribbling, and def/sho >= 75 each)
+    if pace >= 75 and dribbling >= 75:
+        if defending >= 75 and is_defence:
+            return "LB"
+        if shooting >= 75 and is_attack:
+            return "LW"
+
+    # 4 stats combination (pace, dribbling, passing, and shooting/defending)
+    is_4stat = (pace >= 75 and dribbling >= 75 and passing >= 75 and (shooting >= 75 or defending >= 75)) or (
+        is_midfield and pace >= 75 and dribbling >= 75 and (shooting >= 75 or defending >= 75)
+    )
+    if is_4stat:
+        return "CAM" if shooting >= defending else "CDM"
+
+    # 2 stats combination / Main region decision
+    if is_defence:
+        return "CB"
+    if is_midfield:
+        return "CM"
+    return "ST"
+
+
+def assign_roster_positions(
+    leaderboard_records: List[dict],
+    matches: List[MatchRecord],
+) -> Dict[str, str]:
+    """Determines realistic tactical positions across the entire roster.
+
+    Enforces strict tactical constraints:
+    - Special tribute players (Harold) -> 'GK'
+    - Combination of 3 stats (Pace >= 75, Dribbling >= 75, and Def/Sho >= 75):
+      - Higher defending -> LB/RB (at most 1 LB and 1 RB across the roster)
+      - Higher shooting -> LW/RW (at most 1 LW and 1 RW across the roster)
+    - Combination of 4 stats (Pace, Dribbling, Passing, and Shooting/Defending):
+      - Higher shooting -> CAM
+      - Higher defending -> CDM
+    - Combination of 2 stats / Primary region:
+      - Defending highest -> CB
+      - Passing highest -> CM
+      - Shooting highest -> ST
+    - Legal positions only: LB, CB, RB, CDM, CM, CAM, LW, ST, RW, GK.
+      'CF', 'LM', 'RM' are converted to ST, LW, RW respectively.
+    """
+    if not leaderboard_records:
+        return {}
+
+    cs_map = calculate_player_conceded_and_clean_sheets(matches)
+
+    raw_players = []
+    for r in leaderboard_records:
+        pname = str(r.get("player", ""))
+        canonical = canonicalize_player_name(pname)
+        key = canonical.strip().lower()
+        if not key:
+            continue
+
+        if key == "harold":
+            raw_players.append({
+                "key": key,
+                "canonical": canonical,
+                "is_gk": True,
+                "pace": 99,
+                "shooting": 99,
+                "passing": 99,
+                "dribbling": 99,
+                "defending": 99,
+                "rating": 99,
+            })
+            continue
+
+        mp = int(r.get("matches_played", 0))
+        goals = int(r.get("goals", 0))
+        assists = int(r.get("assists", 0))
+        gpg = float(r.get("gpg", 0.0))
+        apg = float(r.get("apg", 0.0))
+        gapg = float(r.get("gapg", 0.0))
+        win_rate = float(r.get("win_rate", 0.0))
+        wins = int(r.get("wins", 0))
+        if wins == 0 and win_rate > 0 and mp > 0:
+            wins = int(round((win_rate / 100.0) * mp))
+        clean_sheets = int(r.get("clean_sheets", 0))
+
+        rating = compute_player_card_ovr(r)
+        pace = int(max(71, min(99, round(71.0 + (rating - 60) * (28.0 / 39.0)))))
+        goal_ratio = (goals / (goals + assists)) if (goals + assists) > 0 else 0.5
+        shooting = int(max(60, min(99, round(58.0 + min(goals * 1.0, 20.0) + gpg * 6.5 + goal_ratio * 7.0))))
+        assist_ratio = (assists / (goals + assists)) if (goals + assists) > 0 else 0.5
+        passing = int(max(60, min(99, round(58.0 + min(assists * 1.1, 20.0) + apg * 7.5 + assist_ratio * 8.0))))
+        dribbling = int(max(60, min(99, round(60.0 + gapg * 11.5))))
+
+        c_entry = cs_map.get(key, {})
+        goals_conceded = int(c_entry.get("goals_conceded", 0))
+        clean_sheets = max(clean_sheets, int(c_entry.get("clean_sheets", 0)))
+        c_matches = int(c_entry.get("matches", 0)) or max(mp, 1)
+        gc_per_game = goals_conceded / c_matches
+        gc_factor = max(0.0, min(1.0, 1.0 - (gc_per_game / 4.0)))
+        win_factor = max(0.0, min(1.0, (wins / max(mp, 1)) if mp > 0 else (win_rate / 100.0)))
+        cs_factor = max(0.0, min(1.0, clean_sheets / max(mp, 1)))
+        raw_def_efficiency = (0.50 * gc_factor) + (0.30 * win_factor) + (0.20 * cs_factor)
+        def_damping_k = 3.0
+        baseline_def = 0.45
+        damped_def_efficiency = ((mp / (mp + def_damping_k)) * raw_def_efficiency) + ((def_damping_k / (mp + def_damping_k)) * baseline_def)
+        defending = int(max(60, min(99, round(60.0 + 39.0 * damped_def_efficiency))))
+
+        raw_players.append({
+            "key": key,
+            "canonical": canonical,
+            "is_gk": False,
+            "pace": pace,
+            "shooting": shooting,
+            "passing": passing,
+            "dribbling": dribbling,
+            "defending": defending,
+            "rating": rating,
+        })
+
+    positions: Dict[str, str] = {}
+    assigned: set[str] = set()
+
+    # 1. Special tribute GK
+    for p in raw_players:
+        if p["is_gk"]:
+            positions[p["key"]] = "GK"
+            assigned.add(p["key"])
+
+    # 2. Fullbacks (LB / RB) - Exactly max 1 LB and 1 RB across the roster
+    fb_candidates = [
+        p for p in raw_players
+        if p["key"] not in assigned
+        and p["pace"] >= 75 and p["dribbling"] >= 75 and p["defending"] >= 75
+        and p["defending"] >= p["shooting"]
+    ]
+    fb_candidates.sort(key=lambda p: (p["defending"], p["pace"] + p["dribbling"]), reverse=True)
+    if len(fb_candidates) >= 1:
+        positions[fb_candidates[0]["key"]] = "LB"
+        assigned.add(fb_candidates[0]["key"])
+    if len(fb_candidates) >= 2:
+        positions[fb_candidates[1]["key"]] = "RB"
+        assigned.add(fb_candidates[1]["key"])
+
+    # 3. Wingers (LW / RW) - Exactly max 1 LW and 1 RW across the roster
+    w_candidates = [
+        p for p in raw_players
+        if p["key"] not in assigned
+        and p["pace"] >= 75 and p["dribbling"] >= 75 and p["shooting"] >= 75
+        and p["shooting"] >= p["defending"]
+    ]
+    w_candidates.sort(key=lambda p: (p["shooting"], p["pace"] + p["dribbling"]), reverse=True)
+    if len(w_candidates) >= 1:
+        positions[w_candidates[0]["key"]] = "LW"
+        assigned.add(w_candidates[0]["key"])
+    if len(w_candidates) >= 2:
+        positions[w_candidates[1]["key"]] = "RW"
+        assigned.add(w_candidates[1]["key"])
+
+    # 4. Remaining outfield players: 4 stats (CAM/CDM) or 2 stats (CB/CM/ST)
+    for p in raw_players:
+        k = p["key"]
+        if k in assigned:
+            continue
+
+        pac, dri, pas = p["pace"], p["dribbling"], p["passing"]
+        sho, df = p["shooting"], p["defending"]
+
+        # Combination of 4 stats
+        is_4stat = (pac >= 75 and dri >= 75 and pas >= 75 and (sho >= 75 or df >= 75)) or (
+            pas >= sho and pas >= df and pas >= 75 and (dri >= 75 or pac >= 75)
+        )
+        if is_4stat:
+            positions[k] = "CAM" if sho >= df else "CDM"
+            assigned.add(k)
+            continue
+
+        # Combination of 2 stats / Region decision
+        if df >= sho and df >= pas:
+            positions[k] = "CB"
+        elif pas >= sho and pas >= df:
+            positions[k] = "CM"
+        else:
+            positions[k] = "ST"
+        assigned.add(k)
+
+    # Conversion of forbidden roles
+    conversion = {"CF": "ST", "LM": "LW", "RM": "RW"}
+    for k, pos in list(positions.items()):
+        if pos in conversion:
+            positions[k] = conversion[pos]
+
+    return positions
+
+
 def calculate_player_card_stats(
     player_name: str,
     leaderboard_records: List[dict],
@@ -1026,41 +1238,19 @@ def calculate_player_card_stats(
 
     physical = int(max(60, min(99, round((rating + pace + dribbling) / 3.0))))
 
-    # Realistic Football Position Classifier (All non-GK outfield roles):
-    # ST, CF, LW, RW, CAM, CM, LM, RM, CDM, LB, RB, CB
-    # 1. Clear Defenders (Defending is the primary standout trait)
-    if defending >= 82 and defending >= shooting + 12:
-        if pace >= 82 and passing >= 75:
-            position = "LB" if "l" in canonical.lower() else "RB"
-        elif defending >= 88:
-            position = "CB"
-        else:
-            position = "CDM"
-    elif defending >= 78 and defending > shooting and defending > passing:
-        if pace >= 80 and passing >= 75:
-            position = "RB" if canonical.lower() in ("azlan", "skan") else "LB"
-        else:
-            position = "CDM"
-    # 2. Elite Goalscorers (Shooting is distinctly dominant)
-    elif shooting >= 85 and shooting >= passing + 4:
-        position = "ST"
-    # 3. Creative Playmakers (Passing is distinctly dominant)
-    elif passing >= 80 and passing >= shooting + 6:
-        position = "CAM"
-    # 4. Box-to-Box / Midfield Anchors
-    elif abs(passing - defending) <= 6 and abs(shooting - defending) <= 6:
-        position = "CM"
-    # 5. Dual Threats / Wide Attackers
-    elif shooting >= 78 and passing >= 78:
-        position = "CF"
-    elif pace >= 82 and passing >= 76 and shooting < 78:
-        position = "LM" if "l" in canonical.lower() else "RM"
-    elif pace >= 84 and dribbling >= 82 and (shooting >= 78 or passing >= 78):
-        position = "LW" if "l" in canonical.lower() else "RW"
-    elif shooting >= passing:
-        position = "ST"
+    # Position Assignment: Use roster-wide tactical positioning or individual fallback
+    positions_map = assign_roster_positions(leaderboard_records, matches) if leaderboard_records else {}
+    if key in positions_map:
+        position = positions_map[key]
     else:
-        position = "CAM"
+        position = _assign_individual_position(
+            canonical=canonical,
+            pace=pace,
+            shooting=shooting,
+            passing=passing,
+            dribbling=dribbling,
+            defending=defending,
+        )
 
     return {
         "player": record["player"],
@@ -1679,11 +1869,15 @@ def calculate_squad_lineup(
 
     all_cards.sort(key=lambda x: (x["rating"], x["dribbling"] + x["shooting"]), reverse=True)
 
-    attackers = [c for c in all_cards if c["position"] in ("ST", "CF", "LW", "RW")]
-    midfielders = [c for c in all_cards if c["position"] in ("CAM", "CM", "LM", "RM", "CDM")]
+    goalkeepers = [c for c in all_cards if c["position"] == "GK"]
+    attackers = [c for c in all_cards if c["position"] in ("ST", "LW", "RW")]
+    midfielders = [c for c in all_cards if c["position"] in ("CAM", "CM", "CDM")]
     defenders = [c for c in all_cards if c["position"] in ("CB", "LB", "RB")]
 
-    unassigned = [c for c in all_cards if c not in attackers and c not in midfielders and c not in defenders]
+    unassigned = [
+        c for c in all_cards
+        if c not in attackers and c not in midfielders and c not in defenders and c not in goalkeepers
+    ]
     for u in unassigned:
         if u["shooting"] >= 80:
             attackers.append(u)
@@ -1697,6 +1891,7 @@ def calculate_squad_lineup(
     return {
         "squad_size": len(all_cards),
         "avg_ovr": avg_ovr,
+        "goalkeepers": goalkeepers,
         "attackers": attackers,
         "midfielders": midfielders,
         "defenders": defenders,

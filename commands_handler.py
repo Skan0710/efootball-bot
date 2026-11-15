@@ -2715,18 +2715,23 @@ def register_commands(
         pitch_buf = render_squad_pitch(lineup, title="CO-OP STARTING XI & SQUAD PITCH")
         pitch_file = discord.File(fp=pitch_buf, filename="squad_pitch.png")
 
+        gk_str = ", ".join(f"**{p['player']}** ({p['rating']})" for p in lineup.get("goalkeepers", []))
         att_str = ", ".join(f"**{p['player']}** ({p['rating']})" for p in lineup["attackers"]) or "None"
         mid_str = ", ".join(f"**{p['player']}** ({p['rating']})" for p in lineup["midfielders"]) or "None"
         def_str = ", ".join(f"**{p['player']}** ({p['rating']})" for p in lineup["defenders"]) or "None"
 
+        desc = f"**Average OVR:** ⭐ **{lineup['avg_ovr']}** • **Squad Size:** {lineup['squad_size']} Players\n\n"
+        if gk_str:
+            desc += f"🧤 **Goalkeeper:** {gk_str}\n"
+        desc += (
+            f"⚔️ **Attackers:** {att_str}\n"
+            f"🎯 **Midfielders:** {mid_str}\n"
+            f"🛡️ **Defenders:** {def_str}"
+        )
+
         embed = discord.Embed(
             title="⚽ Co-op Squad Starting Lineup",
-            description=(
-                f"**Average OVR:** ⭐ **{lineup['avg_ovr']}** • **Squad Size:** {lineup['squad_size']} Players\n\n"
-                f"⚔️ **Attackers:** {att_str}\n"
-                f"🎯 **Midfielders:** {mid_str}\n"
-                f"🛡️ **Defenders:** {def_str}"
-            ),
+            description=desc,
             color=discord.Color.brand_green(),
             timestamp=datetime.now(),
         )
