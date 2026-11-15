@@ -456,6 +456,10 @@ def compute_player_card_ovr(
     damping_k: float = 3.5,
 ) -> int:
     """Computes the official confidence-weighted FC 27 Card OVR rating (60–99)."""
+    p_name = str(record.get("player", "") if isinstance(record, dict) else getattr(record, "player", "")).lower()
+    if p_name == "harold" or "harold" in p_name:
+        return 99
+
     if isinstance(record, dict):
         mp = int(record.get("matches_played", 0))
     else:
@@ -927,6 +931,42 @@ def calculate_player_card_stats(
     """Computes FC 27-style card OVR and 6 face attributes (PAC/SHO/PAS/DRI/DEF/PHY)."""
     canonical = canonicalize_player_name(player_name)
     key = canonical.strip().lower()
+
+    # Special Harold 99 GK Tribute Card (Fixed 99 OVR, all GK stats 99, never changes)
+    if key == "harold":
+        return {
+            "player": "Harold",
+            "position": "GK",
+            "rating": 99,
+            "pace": 99,
+            "shooting": 99,
+            "passing": 99,
+            "dribbling": 99,
+            "defending": 99,
+            "physical": 99,
+            "div": 99,
+            "han": 99,
+            "kic": 99,
+            "ref": 99,
+            "spe": 99,
+            "pos": 99,
+            "diving": 99,
+            "handling": 99,
+            "kicking": 99,
+            "reflexes": 99,
+            "speed": 99,
+            "positioning": 99,
+            "matches_played": 99,
+            "goals": 0,
+            "assists": 0,
+            "gapg": 0.0,
+            "win_rate": 100.0,
+            "goals_conceded": 0,
+            "clean_sheets": 99,
+            "is_tribute": True,
+            "tier_label": "TRIBUTE ICON",
+        }
+
     record = next(
         (
             r

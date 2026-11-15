@@ -2354,17 +2354,29 @@ def register_commands(
         filename = f"{safe_slug}_fc27_card.png"
         file = discord.File(fp=png_buf, filename=filename)
 
-        embed = discord.Embed(
-            title=f"🃏 FC 27 Player Card — {card_stats['player']} ({card_stats['rating']} OVR)",
-            description=(
+        if card_stats.get("position") == "GK":
+            stats_desc = (
+                f"**DIV:** {card_stats.get('div', 99)} · **HAN:** {card_stats.get('han', 99)} · **KIC:** {card_stats.get('kic', 99)} · "
+                f"**REF:** {card_stats.get('ref', 99)} · **SPE:** {card_stats.get('spe', 99)} · **POS:** {card_stats.get('pos', 99)}"
+            )
+            card_title = f"👑 Special Tribute GK Card — {card_stats['player']} ({card_stats['rating']} OVR)" if card_stats.get("is_tribute") else f"🃏 FC 27 Goalkeeper Card — {card_stats['player']} ({card_stats['rating']} OVR)"
+            footer_text = "Legendary 99 OVR Special Tribute Card • Permanent Hall of Fame Status" if card_stats.get("is_tribute") else "FC 27 Goalkeeper Attributes: DIV · HAN · KIC · REF · SPE · POS"
+        else:
+            stats_desc = (
                 f"**PAC:** {card_stats['pace']} · **SHO:** {card_stats['shooting']} · **PAS:** {card_stats['passing']} · "
                 f"**DRI:** {card_stats['dribbling']} · **DEF:** {card_stats['defending']} · **PHY:** {card_stats['physical']}"
-            ),
+            )
+            card_title = f"🃏 FC 27 Player Card — {card_stats['player']} ({card_stats['rating']} OVR)"
+            footer_text = "OVR=60–99 · PAC=71–99 · SHO=Goals · PAS=Assists · DRI=GAPG · DEF=Wins/GC/CS · PHY=Avg(OVR,PAC,DRI)"
+
+        embed = discord.Embed(
+            title=card_title,
+            description=stats_desc,
             color=discord.Color.gold(),
             timestamp=datetime.now(),
         )
         embed.set_image(url=f"attachment://{filename}")
-        embed.set_footer(text="OVR=60–99 · PAC=71–99 · SHO=Goals · PAS=Assists · DRI=GAPG · DEF=Wins/GC/CS · PHY=Avg(OVR,PAC,DRI)")
+        embed.set_footer(text=footer_text)
         await interaction.followup.send(embed=embed, file=file)
 
     # 16. /chemistry

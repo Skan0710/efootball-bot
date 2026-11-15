@@ -46,6 +46,9 @@ PLAYER_CANONICAL_MAP: Dict[str, str] = {
     "roshan": "Roshan",
     "16roshan": "Roshan",
     "roshan16": "Roshan",
+    # Harold (Harold, HaroldGK - 99 OVR Tribute GK)
+    "harold": "Harold",
+    "haroldgk": "Harold",
 }
 
 
@@ -70,6 +73,8 @@ def canonicalize_player_name(name: str) -> str:
         return "Ashy"
     if "roshan" in clean:
         return "Roshan"
+    if "harold" in clean:
+        return "Harold"
     if "jonny" in clean or "jonaldinho" in clean:
         return "Jonny"
     if clean.startswith("azlan"):

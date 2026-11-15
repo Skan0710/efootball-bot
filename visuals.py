@@ -78,9 +78,21 @@ def _find_player_pfp(player_name: str, pfp_dir: Optional[Path] = None) -> Option
     return None
 
 
-def _card_theme(rating: int) -> Dict[str, Tuple[int, int, int]]:
+def _find_team_logo(pfp_dir: Optional[Path] = None) -> Optional[Path]:
+    """Locates the club crest / team logo in the pfp directory if present."""
+    directory = pfp_dir or (Path(__file__).resolve().parent / "pfp")
+    if not directory.exists() or not directory.is_dir():
+        return None
+    for name in ["teamlogo.jpg", "teamlogo.png", "teamlogo.jpeg", "team_logo.png", "team_logo.jpg", "logo.png", "logo.jpg"]:
+        p = directory / name
+        if p.exists() and p.is_file():
+            return p
+    return None
+
+
+def _card_theme(rating: int, is_tribute: bool = False) -> Dict[str, Tuple[int, int, int]]:
     """Selects EA FC 27 tier color palette based on OVR rating."""
-    if rating >= 88:
+    if is_tribute or rating >= 88:
         # Icon / TOTY Royal Gold
         return {
             "bg_top": (16, 26, 62),
@@ -90,7 +102,7 @@ def _card_theme(rating: int) -> Dict[str, Tuple[int, int, int]]:
             "text": (250, 232, 178),
             "subtext": (210, 198, 162),
             "divider": (212, 168, 72),
-            "tier_label": "TOTY ICON",
+            "tier_label": "TRIBUTE ICON" if is_tribute else "TOTY ICON",
         }
     if rating >= 75:
         # Gold Rare
@@ -144,7 +156,7 @@ def _lerp_color(
 def render_fc27_card(card: dict) -> io.BytesIO:
     """Renders an FC 27 Ultimate Team-style PNG card into an in-memory PNG buffer."""
     width, height = 460, 660
-    theme = _card_theme(int(card["rating"]))
+    theme = _card_theme(int(card["rating"]), is_tribute=bool(card.get("is_tribute")))
 
     # Outer shield silhouette points (classic UT / FC 27 card shape)
     shield_outer = [
@@ -206,7 +218,7 @@ def render_fc27_card(card: dict) -> io.BytesIO:
     draw.polygon(shield_inner, outline=(*theme["divider"], 200), width=2)
 
     # Fonts
-    font_ovr = _load_font(68, bold=True)
+    font_ovr = _load_font(60, bold=True)
     font_pos = _load_font(26, bold=True)
     font_tier = _load_font(14, bold=True)
     font_name = _load_font(36, bold=True)
@@ -215,14 +227,49 @@ def render_fc27_card(card: dict) -> io.BytesIO:
     font_footer = _load_font(16, bold=True)
     font_crest = _load_font(56, bold=True)
 
-    # Top-left Rating & Position
+    # Top-left Rating & Position (carefully centered in column with breathing room)
+    col_x = 94
     ovr_text = str(card["rating"])
-    draw.text((88, 66), ovr_text, font=font_ovr, fill=theme["text"], anchor="mm")
-    draw.line([(56, 108), (120, 108)], fill=theme["divider"], width=2)
-    draw.text((88, 128), str(card["position"]), font=font_pos, fill=theme["text"], anchor="mm")
+    draw.text((col_x, 70), ovr_text, font=font_ovr, fill=theme["text"], anchor="mm")
+    draw.line([(col_x - 30, 108), (col_x + 30, 108)], fill=theme["divider"], width=2)
+    draw.text((col_x, 130), str(card["position"]), font=font_pos, fill=theme["text"], anchor="mm")
 
-    # Small club pill under position
-    draw.text((88, 162), "CO-OP FC", font=font_tier, fill=theme["subtext"], anchor="mm")
+    # Team Crest / Club Logo placeholder under position
+    logo_path = _find_team_logo()
+    logo_y = 172
+    badge_size = 38
+    half_badge = badge_size // 2
+    b_x0, b_y0 = col_x - half_badge, logo_y - half_badge
+    b_x1, b_y1 = col_x + half_badge, logo_y + half_badge
+
+    # Logo placeholder frame
+    draw.rounded_rectangle(
+        [(b_x0 - 2, b_y0 - 2), (b_x1 + 2, b_y1 + 2)],
+        radius=6,
+        fill=(*theme["bg_bot"], 220),
+        outline=(*theme["divider"], 200),
+        width=1,
+    )
+
+    rendered_logo = False
+    if logo_path:
+        try:
+            with Image.open(logo_path) as logo_img:
+                logo_rgba = logo_img.convert("RGBA")
+                lw, lh = logo_rgba.size
+                scale = min(badge_size / max(lw, 1), badge_size / max(lh, 1))
+                nlw = max(1, int(round(lw * scale)))
+                nlh = max(1, int(round(lh * scale)))
+                resized_logo = logo_rgba.resize((nlw, nlh), Image.Resampling.LANCZOS)
+                paste_lx = b_x0 + (badge_size - nlw) // 2
+                paste_ly = b_y0 + (badge_size - nlh) // 2
+                canvas.paste(resized_logo, (paste_lx, paste_ly), mask=resized_logo)
+                rendered_logo = True
+        except Exception:
+            rendered_logo = False
+
+    if not rendered_logo:
+        draw.text((col_x, logo_y), "FC", font=_load_font(12, bold=True), fill=theme["subtext"], anchor="mm")
 
     # Stylized Avatar / Crest Emblem or Player PFP on center-right (Clean Square Display)
     cx, cy = 266, 198
@@ -293,17 +340,30 @@ def render_fc27_card(card: dict) -> io.BytesIO:
     draw.text((width // 2, name_y), player_label, font=font_name, fill=theme["text"], anchor="mm")
     draw.line([(68, name_y + 26), (width - 68, name_y + 26)], fill=theme["divider"], width=3)
 
-    # 6 Core FC 27 Stats in 2 balanced columns
-    left_stats = [
-        (card["pace"], "PAC"),
-        (card["shooting"], "SHO"),
-        (card["passing"], "PAS"),
-    ]
-    right_stats = [
-        (card["dribbling"], "DRI"),
-        (card["defending"], "DEF"),
-        (card["physical"], "PHY"),
-    ]
+    # 6 Core FC 27 Stats in 2 balanced columns (Outfield vs Goalkeeper)
+    is_gk = str(card.get("position", "")).upper() == "GK"
+    if is_gk:
+        left_stats = [
+            (int(card.get("div", card.get("diving", 99))), "DIV"),
+            (int(card.get("han", card.get("handling", 99))), "HAN"),
+            (int(card.get("kic", card.get("kicking", 99))), "KIC"),
+        ]
+        right_stats = [
+            (int(card.get("ref", card.get("reflexes", 99))), "REF"),
+            (int(card.get("spe", card.get("speed", 99))), "SPE"),
+            (int(card.get("pos", card.get("positioning", 99))), "POS"),
+        ]
+    else:
+        left_stats = [
+            (card["pace"], "PAC"),
+            (card["shooting"], "SHO"),
+            (card["passing"], "PAS"),
+        ]
+        right_stats = [
+            (card["dribbling"], "DRI"),
+            (card["defending"], "DEF"),
+            (card["physical"], "PHY"),
+        ]
 
     start_y = 402
     row_gap = 50
@@ -322,9 +382,13 @@ def render_fc27_card(card: dict) -> io.BytesIO:
 
     # Bottom Career Summary Strip
     draw.line([(106, 544), (width - 106, 544)], fill=theme["divider"], width=2)
-    summary_text = f"{card['matches_played']} MP  •  {card['goals']}G  •  {card['assists']}A  •  {card['win_rate']:.0f}% WR"
-    draw.text((width // 2, 572), summary_text, font=font_footer, fill=theme["text"], anchor="mm")
-    draw.text((width // 2, 602), f"{card['clean_sheets']} CS  •  {card['goals_conceded']} GA CONCEDED", font=_load_font(12, bold=True), fill=theme["subtext"], anchor="mm")
+    if card.get("is_tribute") or (is_gk and str(card.get("player", "")).lower() == "harold"):
+        draw.text((width // 2, 572), "LEGENDARY GOALKEEPER • TRIBUTE SPECIAL", font=font_footer, fill=theme["text"], anchor="mm")
+        draw.text((width // 2, 602), "HALL OF FAME #1 • UNRIVALLED GUARDIAN", font=_load_font(12, bold=True), fill=theme["subtext"], anchor="mm")
+    else:
+        summary_text = f"{card['matches_played']} MP  •  {card['goals']}G  •  {card['assists']}A  •  {card['win_rate']:.0f}% WR"
+        draw.text((width // 2, 572), summary_text, font=font_footer, fill=theme["text"], anchor="mm")
+        draw.text((width // 2, 602), f"{card['clean_sheets']} CS  •  {card['goals_conceded']} GA CONCEDED", font=_load_font(12, bold=True), fill=theme["subtext"], anchor="mm")
 
     out = io.BytesIO()
     canvas.save(out, format="PNG")

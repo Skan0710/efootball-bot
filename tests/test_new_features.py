@@ -47,6 +47,33 @@ def test_compute_player_card_ovr() -> None:
     ovr_zero = compute_player_card_ovr(zero_rec)
     assert ovr_zero == 60
 
+    # Harold special tribute card is always 99
+    harold_rec = {"player": "Harold", "matches_played": 0, "win_rate": 0.0, "gapg": 0.0, "gpg": 0.0}
+    assert compute_player_card_ovr(harold_rec) == 99
+
+
+def test_harold_tribute_card_and_gk_attributes() -> None:
+    """Verifies Harold 99 GK card stats and official FC 27 card rendering."""
+    from stats import calculate_player_card_stats
+    from visuals import render_fc27_card
+
+    h_card = calculate_player_card_stats("Harold", [], [])
+    assert h_card is not None
+    assert h_card["player"] == "Harold"
+    assert h_card["rating"] == 99
+    assert h_card["position"] == "GK"
+    assert h_card["div"] == 99
+    assert h_card["han"] == 99
+    assert h_card["kic"] == 99
+    assert h_card["ref"] == 99
+    assert h_card["spe"] == 99
+    assert h_card["pos"] == 99
+
+    buf = render_fc27_card(h_card)
+    assert isinstance(buf, io.BytesIO)
+    img = Image.open(buf)
+    assert img.size == (460, 660)
+
 
 def test_calculate_player_rivalry() -> None:
     """Verifies head-to-head clash history and bragging rights calculation."""
