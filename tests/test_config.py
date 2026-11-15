@@ -60,3 +60,5 @@ def test_load_config_valid_defaults(monkeypatch: pytest.MonkeyPatch, tmp_path: P
     assert cfg.max_image_bytes == 10 * 1024 * 1024
     assert cfg.allowed_channel_id is None
     assert cfg.admin_role_id is None
+    assert cfg.groq_api_key is None
+    assert cfg.groq_vision_model == "llama-3.2-11b-vision-preview"

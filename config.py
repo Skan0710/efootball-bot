@@ -30,6 +30,8 @@ class BotConfig:
     tesseract_cmd: Optional[str] = None
     delete_password: str = "Skan6243"
     log_level: str = "INFO"
+    groq_api_key: Optional[str] = None
+    groq_vision_model: str = "llama-3.2-11b-vision-preview"
 
     @property
     def max_image_bytes(self) -> int:
@@ -125,6 +127,8 @@ def load_config(env_path: Optional[str | Path] = None, require_token: bool = Tru
     tesseract_cmd = os.getenv("TESSERACT_CMD", "").strip() or None
     delete_password = os.getenv("DELETE_PASSWORD", "Skan6243").strip() or "Skan6243"
     log_level = os.getenv("LOG_LEVEL", "INFO").strip().upper()
+    groq_api_key = os.getenv("GROQ_API_KEY", "").strip() or None
+    groq_vision_model = os.getenv("GROQ_VISION_MODEL", "llama-3.2-11b-vision-preview").strip() or "llama-3.2-11b-vision-preview"
 
     return BotConfig(
         discord_token=token,
@@ -136,4 +140,6 @@ def load_config(env_path: Optional[str | Path] = None, require_token: bool = Tru
         tesseract_cmd=tesseract_cmd,
         delete_password=delete_password,
         log_level=log_level,
+        groq_api_key=groq_api_key,
+        groq_vision_model=groq_vision_model,
     )

@@ -179,3 +179,97 @@ def test_real_efootball_details_screenshot_extraction() -> None:
     suri = next(c for c in result.candidates if c.player == "Suri")
     assert suri.goals == 1
     assert suri.assists == 2
+
+
+def test_extract_via_vision_ai_success(tmp_path: Path) -> None:
+    """Verifies that multimodal AI Vision extracts and canonicalizes player stats cleanly."""
+    from ocr import extract_via_vision_ai
+    from unittest.mock import MagicMock
+
+    img_path = tmp_path / "vision_test.jpg"
+    img = Image.new("RGB", (1280, 720), color=(20, 20, 20))
+    img.save(img_path, format="JPEG")
+
+    mock_json_content = (
+        '{\n'
+        '  "team": "JFC",\n'
+        '  "players": [\n'
+        '    {"player": "itsJonaldinhoH", "goals": 0, "assists": 0},\n'
+        '    {"player": "lillym", "goals": 0, "assists": 2},\n'
+        '    {"player": "Azlan19Siuu", "goals": 3, "assists": 0}\n'
+        '  ]\n'
+        '}'
+    )
+
+    mock_choice = MagicMock()
+    mock_choice.message.content = mock_json_content
+    mock_completion = MagicMock()
+    mock_completion.choices = [mock_choice]
+
+    with patch("ocr.Groq") as mock_groq_cls:
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = mock_completion
+        mock_groq_cls.return_value = mock_client
+
+        res = extract_via_vision_ai(img_path, api_key="fake-key-12345")
+
+    assert res is not None
+    assert res.success is True
+    assert len(res.candidates) == 3
+    # Player canonicalization check
+    assert res.candidates[0].player == "Jonny"
+    assert res.candidates[0].goals == 0
+    assert res.candidates[0].assists == 0
+
+    assert res.candidates[1].player == "Lilly"
+    assert res.candidates[1].goals == 0
+    assert res.candidates[1].assists == 2
+
+    assert res.candidates[2].player == "Azlan"
+    assert res.candidates[2].goals == 3
+    assert res.candidates[2].assists == 0
+    assert "AI Vision" in res.candidates[2].confidence_note
+
+
+def test_extract_via_vision_ai_no_key(tmp_path: Path) -> None:
+    """Verifies that vision AI extraction returns None safely when no key is configured."""
+    from ocr import extract_via_vision_ai
+
+    img_path = tmp_path / "no_key.jpg"
+    img = Image.new("RGB", (800, 600), color=(0, 0, 0))
+    img.save(img_path, format="JPEG")
+
+    with patch.dict("os.environ", {}, clear=True):
+        res = extract_via_vision_ai(img_path, api_key=None)
+    assert res is None
+
+
+def test_extract_player_stats_prioritizes_ai_and_falls_back(tmp_path: Path) -> None:
+    """Verifies that AI Vision is prioritized when key is present, and falls back to local OCR."""
+    from models import OCRPlayerCandidate
+    from ocr import OCRResult, extract_player_stats_from_screenshot
+
+    img_path = tmp_path / "fallback_test.jpg"
+    img = Image.new("RGB", (1280, 720), color=(10, 10, 10))
+    img.save(img_path, format="JPEG")
+
+    ai_candidates = [
+        OCRPlayerCandidate(player="Suri", goals=4, assists=2, confidence_note="AI Vision (High Accuracy)"),
+        OCRPlayerCandidate(player="Roshan", goals=0, assists=1, confidence_note="AI Vision (High Accuracy)"),
+    ]
+    mock_ai_result = OCRResult(success=True, candidates=ai_candidates)
+
+    # 1. When AI succeeds, extract_player_stats_from_screenshot returns AI result directly
+    with patch("ocr.extract_via_vision_ai", return_value=mock_ai_result):
+        res1 = extract_player_stats_from_screenshot(img_path, groq_api_key="valid-key")
+        assert res1.success is True
+        assert [c.player for c in res1.candidates] == ["Suri", "Roshan"]
+
+    # 2. When AI returns None (or fails), falls back to local pipeline
+    with patch("ocr.extract_via_vision_ai", return_value=None), \
+         patch("ocr._extract_via_targeted_regions", return_value=OCRResult(success=True, candidates=[
+             OCRPlayerCandidate(player="LocalPlayer", goals=1, assists=0)
+         ])):
+        res2 = extract_player_stats_from_screenshot(img_path, groq_api_key="valid-key")
+        assert res2.success is True
+        assert res2.candidates[0].player == "LocalPlayer"

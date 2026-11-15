@@ -1193,7 +1193,12 @@ async def handle_pasted_match_message(
             await message.reply(f"❌ Could not process 1st image: {err1}", delete_after=15)
             return
 
-        ocr_1 = extract_player_stats_from_screenshot(file_1, tesseract_cmd=config.tesseract_cmd)
+        ocr_1 = extract_player_stats_from_screenshot(
+            file_1,
+            tesseract_cmd=config.tesseract_cmd,
+            groq_api_key=config.groq_api_key,
+            groq_model=config.groq_vision_model,
+        )
         home_candidates = list(ocr_1.candidates)
         home_score = sum(c.goals for c in home_candidates)
         image_hash = compute_file_sha256(file_1)
@@ -1204,7 +1209,12 @@ async def handle_pasted_match_message(
             file_2 = temp_dir / f"paste_2_{message.id}_{attachments[1].id}.png"
             ok2, err2 = await download_image_source(attachments[1], None, file_2, config.max_image_bytes)
             if ok2:
-                ocr_2 = extract_player_stats_from_screenshot(file_2, tesseract_cmd=config.tesseract_cmd)
+                ocr_2 = extract_player_stats_from_screenshot(
+                    file_2,
+                    tesseract_cmd=config.tesseract_cmd,
+                    groq_api_key=config.groq_api_key,
+                    groq_model=config.groq_vision_model,
+                )
                 away_candidates = list(ocr_2.candidates)
                 away_score = sum(c.goals for c in away_candidates)
 
@@ -1364,6 +1374,8 @@ def register_commands(
             ocr_1 = extract_player_stats_from_screenshot(
                 temp_file_1,
                 tesseract_cmd=config.tesseract_cmd,
+                groq_api_key=config.groq_api_key,
+                groq_model=config.groq_vision_model,
             )
             home_candidates = list(ocr_1.candidates)
 
@@ -1383,6 +1395,8 @@ def register_commands(
                     ocr_2 = extract_player_stats_from_screenshot(
                         temp_file_2,
                         tesseract_cmd=config.tesseract_cmd,
+                        groq_api_key=config.groq_api_key,
+                        groq_model=config.groq_vision_model,
                     )
                     away_candidates = list(ocr_2.candidates)
                     ocr_2_success = ocr_2.success

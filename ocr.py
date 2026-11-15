@@ -6,7 +6,11 @@ OpenCV image preprocessing, and Tesseract OCR with safe failure handling.
 
 from __future__ import annotations
 
+import base64
+import io
+import json
 import logging
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -18,6 +22,11 @@ from PIL import Image
 import pytesseract
 
 from models import OCRPlayerCandidate
+
+try:
+    from groq import Groq
+except ImportError:
+    Groq = None
 
 LOGGER = logging.getLogger("efootball_bot.ocr")
 
@@ -364,21 +373,212 @@ def _extract_via_targeted_regions(
     return None
 
 
+def extract_via_vision_ai(
+    image_path: Path | str,
+    api_key: Optional[str] = None,
+    model: str = "llama-3.2-11b-vision-preview",
+    timeout_seconds: float = 30.0,
+) -> Optional[OCRResult]:
+    """Extracts player stats from screenshot using Multimodal AI Vision.
+
+    Supports OpenAI-compatible Vision API endpoints (e.g. Groq Llama 3.2 Vision).
+    Encodes image as base64 JPEG and expects structured JSON response.
+    """
+    path = Path(image_path)
+    if not path.exists():
+        return None
+
+    resolved_key = api_key or os.getenv("GROQ_API_KEY", "").strip()
+    if not resolved_key:
+        return None
+
+    try:
+        with Image.open(path) as pil_img:
+            rgb_img = pil_img.convert("RGB")
+            max_dim = 1920
+            w, h = rgb_img.size
+            if max(w, h) > max_dim:
+                scale = max_dim / float(max(w, h))
+                rgb_img = rgb_img.resize((int(w * scale), int(h * scale)), Image.Resampling.LANCZOS)
+
+            buf = io.BytesIO()
+            rgb_img.save(buf, format="JPEG", quality=88)
+            base64_image = base64.b64encode(buf.getvalue()).decode("utf-8")
+            data_url = f"data:image/jpeg;base64,{base64_image}"
+    except Exception as exc:
+        LOGGER.warning("Failed to prepare image for vision API: %s", exc)
+        return None
+
+    prompt = (
+        "You are an expert eFootball / PES post-match statistics extraction assistant.\n"
+        "Analyze the provided screenshot of the eFootball post-match 'Match Details' screen.\n\n"
+        "Task instructions:\n"
+        "1. Identify the team name or abbreviation shown on the top-left (e.g. 'JFC', 'MUN', 'FCB').\n"
+        "2. Identify all player usernames displayed in columns across the top row (e.g. 'itsJonaldinhoH', 'lillym', 'Azlan19Siuu', 'SuriBG6', '16_roshan', 'AnnieSynx'). "
+        "There are typically 2 or 3 co-op players.\n"
+        "3. For each player column, find their exact numerical stats in the table rows:\n"
+        "   - 'Goals': Look at the row labeled 'Goals' and read the integer under each player's column.\n"
+        "   - 'Assist' / 'Assists': Look at the row labeled 'Assist' and read the integer under each player's column.\n\n"
+        "Respond ONLY with valid JSON following this exact schema:\n"
+        "{\n"
+        '  "team": "<team_name>",\n'
+        '  "players": [\n'
+        '    {"player": "<exact username>", "goals": <int>, "assists": <int>}\n'
+        "  ]\n"
+        "}\n"
+        "Do not include any Markdown explanation or commentary. Output valid JSON only."
+    )
+
+    content_str: Optional[str] = None
+
+    # 1. Try official groq SDK if installed
+    if Groq is not None:
+        try:
+            client = Groq(api_key=resolved_key, timeout=timeout_seconds)
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {"type": "image_url", "image_url": {"url": data_url}},
+                        ],
+                    }
+                ],
+                temperature=0.1,
+                max_tokens=1000,
+                response_format={"type": "json_object"},
+            )
+            content_str = response.choices[0].message.content
+        except Exception as exc:
+            LOGGER.warning("Groq SDK execution failed: %s; trying HTTP fallback", exc)
+
+    # 2. HTTP fallback via httpx if SDK call was unsuccessful
+    if not content_str:
+        try:
+            import httpx
+            headers = {
+                "Authorization": f"Bearer {resolved_key}",
+                "Content-Type": "application/json",
+            }
+            body = {
+                "model": model,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {"type": "image_url", "image_url": {"url": data_url}},
+                        ],
+                    }
+                ],
+                "temperature": 0.1,
+                "max_tokens": 1000,
+                "response_format": {"type": "json_object"},
+            }
+            with httpx.Client(timeout=timeout_seconds) as http_client:
+                r = http_client.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=body)
+                if r.status_code == 200:
+                    resp_data = r.json()
+                    content_str = resp_data["choices"][0]["message"]["content"]
+                else:
+                    LOGGER.warning("Vision API returned HTTP %d: %s", r.status_code, r.text[:300])
+                    return None
+        except Exception as exc:
+            LOGGER.warning("Vision API HTTP fallback failed: %s", exc)
+            return None
+
+    if not content_str:
+        return None
+
+    try:
+        clean_json_str = content_str.strip()
+        if clean_json_str.startswith("```json"):
+            clean_json_str = clean_json_str[7:]
+        if clean_json_str.startswith("```"):
+            clean_json_str = clean_json_str[3:]
+        if clean_json_str.endswith("```"):
+            clean_json_str = clean_json_str[:-3]
+        clean_json_str = clean_json_str.strip()
+
+        parsed = json.loads(clean_json_str)
+        raw_players = parsed.get("players", [])
+        team_name = parsed.get("team", "")
+
+        candidates: List[OCRPlayerCandidate] = []
+        for p in raw_players:
+            p_name = str(p.get("player", "")).strip()
+            if not p_name:
+                continue
+            try:
+                g = int(p.get("goals", 0))
+            except (ValueError, TypeError):
+                g = 0
+            try:
+                a = int(p.get("assists", 0))
+            except (ValueError, TypeError):
+                a = 0
+            candidates.append(
+                OCRPlayerCandidate(
+                    player=p_name,
+                    goals=g,
+                    assists=a,
+                    confidence_note="AI Vision (High Accuracy)",
+                )
+            )
+
+        if not candidates:
+            return None
+
+        return OCRResult(
+            success=True,
+            candidates=candidates,
+            raw_text=content_str,
+            diagnostics={
+                "engine": "ai_vision",
+                "model": model,
+                "team_detected": team_name,
+                "players_count": len(candidates),
+            },
+        )
+    except Exception as exc:
+        LOGGER.warning("Failed to parse vision response JSON: %s. Content: %s", exc, content_str[:200])
+        return None
+
+
 def extract_player_stats_from_screenshot(
     image_path: Path | str,
     tesseract_cmd: Optional[str] = None,
     layout: Optional[LayoutConfig] = None,
+    groq_api_key: Optional[str] = None,
+    groq_model: Optional[str] = None,
     diagnostic: bool = False,
 ) -> OCRResult:
-    """Performs full layout-aware extraction of player statistics from screenshot.
+    """Performs full extraction of player statistics from screenshot.
 
-    Does NOT save data. Returns structured OCRResult with candidates and diagnostics.
+    1. Attempts high-accuracy AI Vision extraction if API key is configured.
+    2. Gracefully falls back to targeted OpenCV + Tesseract pipeline if AI is
+       not configured or encounters an error.
     """
     path = Path(image_path)
     valid, err = validate_image_file(path)
     if not valid:
         return OCRResult(success=False, error_reason=err or "Invalid image file")
 
+    # Step 1: AI Vision Extraction (High Accuracy)
+    resolved_key = groq_api_key or os.getenv("GROQ_API_KEY", "").strip() or None
+    if resolved_key:
+        try:
+            model = groq_model or os.getenv("GROQ_VISION_MODEL", "llama-3.2-11b-vision-preview").strip()
+            ai_res = extract_via_vision_ai(path, api_key=resolved_key, model=model)
+            if ai_res and ai_res.success and len(ai_res.candidates) > 0:
+                LOGGER.info("Successfully extracted %d players via AI Vision", len(ai_res.candidates))
+                return ai_res
+        except Exception as exc:
+            LOGGER.warning("AI Vision extraction failed, falling back to local OCR: %s", exc)
+
+    # Step 2: Fallback to local OpenCV + Tesseract OCR
     _configure_tesseract(tesseract_cmd)
     cfg = layout or LayoutConfig()
 
