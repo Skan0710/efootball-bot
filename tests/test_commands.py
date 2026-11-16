@@ -43,9 +43,11 @@ def test_command_registration_names(test_config: BotConfig, tmp_path: Path) -> N
         "add-match-text",
         "delete-match",
         "delete-all",
+        "delete-latest",
         "leaderboard",
         "record",
         "matches",
+        "latest-match",
         "teammates",
         "potw",
         "potm",
@@ -1086,6 +1088,150 @@ async def test_recap_trophies_and_tierlist_commands(test_config: BotConfig) -> N
     tl_kwargs = inter_tl.followup.send.call_args[1]
     assert "Co-op Squad Tier List" in tl_kwargs["embed"].title
     assert isinstance(tl_kwargs["file"], discord.File)
+
+
+@pytest.mark.asyncio
+async def test_latest_match_and_delete_latest_flow(test_config: BotConfig, tmp_path: Path) -> None:
+    wb_file = tmp_path / "test_wb.xlsx"
+    em = ExcelManager(wb_file)
+    bot = EFootballBot(test_config)
+    bot.excel_manager = em
+
+    cmd_map = {cmd.name: cmd for cmd in bot.tree.get_commands()}
+    latest_cmd = cmd_map["latest-match"]
+    delete_latest_cmd = cmd_map["delete-latest"]
+
+    # 1. When no matches exist
+    inter_empty = MagicMock(spec=discord.Interaction)
+    inter_empty.guild_id = test_config.guild_id
+    inter_empty.channel_id = test_config.allowed_channel_id
+    inter_empty.response = MagicMock()
+    inter_empty.response.send_message = AsyncMock()
+
+    await latest_cmd.callback(inter_empty)
+    inter_empty.response.send_message.assert_called_once()
+    assert "No matches recorded" in str(inter_empty.response.send_message.call_args)
+
+    # 2. Add two matches to test retrieval of the latest one
+    m1 = MatchRecord(
+        match_id="M-20261116-000001",
+        date="2026-11-16 10:00:00",
+        result=MatchResult.HOME_WIN,
+        submitted_by="AdminUser",
+        notes="Score: Home 2 - 1 Away",
+        player_stats=[
+            PlayerStat(player="Jonny", goals=2, assists=0, result=MatchResult.HOME_WIN),
+            PlayerStat(player="Azlan", goals=1, assists=1, result=MatchResult.AWAY_WIN),
+        ],
+    )
+    m2 = MatchRecord(
+        match_id="M-20261116-000002",
+        date="2026-11-16 11:00:00",
+        result=MatchResult.AWAY_WIN,
+        submitted_by="SkanMaster",
+        notes="Score: Home 1 - 3 Away",
+        player_stats=[
+            PlayerStat(player="Lilly", goals=1, assists=0, result=MatchResult.LOSS),
+            PlayerStat(player="Suri", goals=2, assists=1, result=MatchResult.WIN),
+            PlayerStat(player="Annie", goals=1, assists=1, result=MatchResult.WIN),
+        ],
+    )
+    await em.save_match(m1)
+    await em.save_match(m2)
+
+    # 3. Test /latest-match returns m2 with all details
+    inter_latest = MagicMock(spec=discord.Interaction)
+    inter_latest.guild_id = test_config.guild_id
+    inter_latest.channel_id = test_config.allowed_channel_id
+    inter_latest.response = MagicMock()
+    inter_latest.response.send_message = AsyncMock()
+
+    await latest_cmd.callback(inter_latest)
+    inter_latest.response.send_message.assert_called_once()
+    embed = inter_latest.response.send_message.call_args[1]["embed"]
+    assert "M-20261116-000002" in embed.title
+    assert "SkanMaster" in [f.value for f in embed.fields if f.name == "👤 Added By"][0]
+    assert "2026-11-16 11:00:00" in [f.value for f in embed.fields if f.name == "⏰ Time / Date"][0]
+    assert any("Suri" in f.value for f in embed.fields)
+
+    # 4. Test /delete-latest: invalid password
+    admin_member = MagicMock(spec=discord.Member)
+    admin_member.id = 12345
+    admin_member.name = "AdminUser"
+    admin_member.guild_permissions = discord.Permissions(administrator=True)
+
+    inter_del_wrong = MagicMock(spec=discord.Interaction)
+    inter_del_wrong.guild = MagicMock(spec=discord.Guild)
+    inter_del_wrong.guild_id = test_config.guild_id
+    inter_del_wrong.channel_id = test_config.allowed_channel_id
+    inter_del_wrong.user = admin_member
+    inter_del_wrong.response = MagicMock()
+    inter_del_wrong.response.send_message = AsyncMock()
+
+    await delete_latest_cmd.callback(inter_del_wrong, password="wrong_password")
+    inter_del_wrong.response.send_message.assert_called_once()
+    assert "Invalid password" in str(inter_del_wrong.response.send_message.call_args)
+
+    # 5. Test /delete-latest: no password opens modal
+    inter_del_modal = MagicMock(spec=discord.Interaction)
+    inter_del_modal.guild = MagicMock(spec=discord.Guild)
+    inter_del_modal.guild_id = test_config.guild_id
+    inter_del_modal.channel_id = test_config.allowed_channel_id
+    inter_del_modal.user = admin_member
+    inter_del_modal.response = MagicMock()
+    inter_del_modal.response.send_modal = AsyncMock()
+
+    await delete_latest_cmd.callback(inter_del_modal, password=None)
+    inter_del_modal.response.send_modal.assert_called_once()
+
+    # 6. Test /delete-latest: valid password presents confirmation view showing latest match contents
+    inter_del_ok = MagicMock(spec=discord.Interaction)
+    inter_del_ok.guild = MagicMock(spec=discord.Guild)
+    inter_del_ok.guild_id = test_config.guild_id
+    inter_del_ok.channel_id = test_config.allowed_channel_id
+    inter_del_ok.user = admin_member
+    inter_del_ok.response = MagicMock()
+    inter_del_ok.response.send_message = AsyncMock()
+
+    await delete_latest_cmd.callback(inter_del_ok, password=test_config.delete_password)
+    inter_del_ok.response.send_message.assert_called_once()
+    del_kwargs = inter_del_ok.response.send_message.call_args[1]
+    assert "M-20261116-000002" in del_kwargs["embed"].title
+    assert isinstance(del_kwargs["view"], discord.ui.View)
+
+    # 7. Confirm deletion via the view button
+    btn_inter = MagicMock(spec=discord.Interaction)
+    btn_inter.user = inter_del_ok.user
+    btn_inter.response = MagicMock()
+    btn_inter.response.defer = AsyncMock()
+    btn_inter.edit_original_response = AsyncMock()
+
+    view = del_kwargs["view"]
+    await view.confirm_delete.callback(btn_inter)
+    btn_inter.edit_original_response.assert_called_once()
+    assert "Match Deleted" in btn_inter.edit_original_response.call_args[1]["embed"].title
+
+    # Verify latest match is now m1
+    remaining = await em.get_all_matches()
+    assert len(remaining) == 1
+    assert remaining[0].match_id == "M-20261116-000001"
+
+    # 8. Test DeleteLatestPasswordModal submission
+    from commands_handler import DeleteLatestPasswordModal
+    modal = DeleteLatestPasswordModal(excel_manager=em, config=test_config)
+    modal.password_input._value = test_config.delete_password
+    inter_modal_submit = MagicMock(spec=discord.Interaction)
+    inter_modal_submit.guild = MagicMock(spec=discord.Guild)
+    inter_modal_submit.guild_id = test_config.guild_id
+    inter_modal_submit.channel_id = test_config.allowed_channel_id
+    inter_modal_submit.user = inter_del_ok.user
+    inter_modal_submit.response = MagicMock()
+    inter_modal_submit.response.send_message = AsyncMock()
+
+    await modal.on_submit(inter_modal_submit)
+    inter_modal_submit.response.send_message.assert_called_once()
+    assert "M-20261116-000001" in inter_modal_submit.response.send_message.call_args[1]["embed"].title
+
 
 
 

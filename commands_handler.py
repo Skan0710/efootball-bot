@@ -210,6 +210,54 @@ def format_match_scoreline(match: MatchRecord) -> str:
     return f"**{home_str}** {h_score} - {a_score} **{away_str}**"
 
 
+def build_latest_match_embed(
+    match: MatchRecord,
+    title_prefix: str = "⚽ Latest Match",
+    color: Optional[discord.Color] = None,
+) -> discord.Embed:
+    """Builds a rich embed displaying detailed match information, scoreline, and player contributions."""
+    scoreline = format_match_scoreline(match)
+    embed_color = color if color is not None else discord.Color.blue()
+
+    embed = discord.Embed(
+        title=f"{title_prefix} — ID: {match.match_id}",
+        description=f"### {scoreline}\n**Outcome:** {match.result.value}",
+        color=embed_color,
+        timestamp=datetime.now(),
+    )
+
+    embed.add_field(name="🆔 Match ID", value=f"`{match.match_id}`", inline=True)
+    embed.add_field(name="👤 Added By", value=match.submitted_by or "Unknown", inline=True)
+    embed.add_field(name="⏰ Time / Date", value=match.date or "N/A", inline=True)
+
+    win_stats = [p for p in match.player_stats if p.result in (MatchResult.WIN, MatchResult.HOME_WIN)]
+    loss_stats = [p for p in match.player_stats if p.result in (MatchResult.LOSS, MatchResult.AWAY_WIN)]
+    draw_stats = [p for p in match.player_stats if p.result == MatchResult.DRAW]
+
+    def _format_player_stat(p: PlayerStat) -> str:
+        return f"• **{p.player}**: ⚽ **{p.goals}** goal(s) | 🎯 **{p.assists}** assist(s)"
+
+    if win_stats and loss_stats:
+        win_lines = "\n".join(_format_player_stat(p) for p in win_stats)
+        loss_lines = "\n".join(_format_player_stat(p) for p in loss_stats)
+        embed.add_field(name=f"🏆 Winning Side ({len(win_stats)} players)", value=win_lines, inline=False)
+        embed.add_field(name=f"💔 Defeated Side ({len(loss_stats)} players)", value=loss_lines, inline=False)
+    elif draw_stats:
+        draw_lines = "\n".join(_format_player_stat(p) for p in draw_stats)
+        embed.add_field(name=f"🤝 Draw Side ({len(draw_stats)} players)", value=draw_lines, inline=False)
+    elif match.player_stats:
+        stat_lines = "\n".join(_format_player_stat(p) for p in match.player_stats)
+        embed.add_field(name=f"👥 Players ({len(match.player_stats)})", value=stat_lines, inline=False)
+    else:
+        embed.add_field(name="👥 Players", value="*No player statistics recorded for this match.*", inline=False)
+
+    if match.notes and not match.notes.strip().lower().startswith("score:"):
+        embed.add_field(name="📝 Notes", value=match.notes, inline=False)
+
+    embed.set_footer(text="eFootball Co-op Statistics • /latest-match | /delete-latest")
+    return embed
+
+
 def build_preview_embed(
     candidates: List[OCRPlayerCandidate],
     result: MatchResult,
@@ -1106,10 +1154,11 @@ class DeleteConfirmView(discord.ui.View):
                 color=discord.Color.red(),
             )
             LOGGER.info("Admin %s deleted match %s", interaction.user.name, self.match_id)
-            await interaction.edit_original_response(embed=embed, view=self)
+            await interaction.edit_original_response(content=None, embed=embed, view=self)
         else:
             await interaction.edit_original_response(
                 content=f"❌ Match **{self.match_id}** could not be found or was already deleted.",
+                embed=None,
                 view=self,
             )
 
@@ -1168,6 +1217,74 @@ class DeleteAllConfirmView(discord.ui.View):
 
         await interaction.response.edit_message(
             content="Action cancelled. All match records remain intact.", embed=None, view=self
+        )
+
+
+class DeleteLatestPasswordModal(discord.ui.Modal, title="Authorize Deleting Latest Match"):
+    """Modal for confirming admin password before deleting the latest match."""
+
+    password_input = discord.ui.TextInput(
+        label="Admin Password",
+        style=discord.TextStyle.short,
+        placeholder="Enter the admin password to confirm deletion",
+        required=True,
+        min_length=1,
+        max_length=100,
+    )
+
+    def __init__(self, excel_manager: ExcelManager, config: BotConfig) -> None:
+        super().__init__()
+        self.excel_manager = excel_manager
+        self.config = config
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        if not is_user_admin(interaction, self.config):
+            await interaction.response.send_message(
+                "❌ You do not have permission to delete match records. Only server admins or the designated admin role can perform deletions.",
+                ephemeral=True,
+            )
+            return
+
+        if self.password_input.value.strip() != self.config.delete_password:
+            await interaction.response.send_message(
+                "❌ Invalid password. Action unauthorized.",
+                ephemeral=True,
+            )
+            return
+
+        all_matches = await self.excel_manager.get_all_matches()
+        if not all_matches:
+            await interaction.response.send_message(
+                "📋 No matches recorded yet in the workbook to delete.",
+                ephemeral=True,
+            )
+            return
+
+        latest_match = all_matches[-1]
+        embed = build_latest_match_embed(
+            latest_match,
+            title_prefix="⚠️ Confirm Delete Latest Match",
+            color=discord.Color.red(),
+        )
+        embed.add_field(
+            name="⚠️ Permanent Deletion",
+            value=(
+                f"Are you sure you want to permanently delete latest match `{latest_match.match_id}`?\n"
+                "All player statistics, totals, and leaderboard ranks will be recalculated automatically."
+            ),
+            inline=False,
+        )
+
+        view = DeleteConfirmView(
+            submitting_user_id=interaction.user.id,
+            match_id=latest_match.match_id,
+            excel_manager=self.excel_manager,
+        )
+        await interaction.response.send_message(
+            content="⚠️ **Please confirm if you want to permanently delete this latest match:**",
+            embed=embed,
+            view=view,
+            ephemeral=True,
         )
 
 
@@ -1617,6 +1734,74 @@ def register_commands(
         )
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
+    # 2c. /delete-latest
+    @tree.command(
+        name="delete-latest",
+        description="Permanently delete the latest recorded match (Requires admin password).",
+    )
+    @app_commands.describe(
+        password="Admin authorization password (leave empty to open password prompt)",
+    )
+    async def delete_latest(interaction: discord.Interaction, password: Optional[str] = None) -> None:
+        err = check_guild_and_channel(interaction, config)
+        if err:
+            await interaction.response.send_message(f"❌ {err}", ephemeral=True)
+            return
+
+        if not is_user_admin(interaction, config):
+            await interaction.response.send_message(
+                "❌ You do not have permission to delete match records. Only server admins or the designated admin role can perform deletions.",
+                ephemeral=True,
+            )
+            return
+
+        if password is None:
+            modal = DeleteLatestPasswordModal(excel_manager=excel_manager, config=config)
+            await interaction.response.send_modal(modal)
+            return
+
+        if password.strip() != config.delete_password:
+            await interaction.response.send_message(
+                "❌ Invalid password. Action unauthorized.",
+                ephemeral=True,
+            )
+            return
+
+        all_matches = await excel_manager.get_all_matches()
+        if not all_matches:
+            await interaction.response.send_message(
+                "📋 No matches recorded yet in the workbook to delete.",
+                ephemeral=True,
+            )
+            return
+
+        latest_match = all_matches[-1]
+        embed = build_latest_match_embed(
+            latest_match,
+            title_prefix="⚠️ Confirm Delete Latest Match",
+            color=discord.Color.red(),
+        )
+        embed.add_field(
+            name="⚠️ Permanent Deletion",
+            value=(
+                f"Are you sure you want to permanently delete latest match `{latest_match.match_id}`?\n"
+                "All player statistics, totals, and leaderboard ranks will be recalculated automatically."
+            ),
+            inline=False,
+        )
+
+        view = DeleteConfirmView(
+            submitting_user_id=interaction.user.id,
+            match_id=latest_match.match_id,
+            excel_manager=excel_manager,
+        )
+        await interaction.response.send_message(
+            content="⚠️ **Please confirm if you want to permanently delete this latest match:**",
+            embed=embed,
+            view=view,
+            ephemeral=True,
+        )
+
     # 3. /leaderboard
     @tree.command(
         name="leaderboard",
@@ -1833,6 +2018,29 @@ def register_commands(
         ]
         embed.description = "\n\n".join(lines)
         embed.set_footer(text=f"Showing {len(recent)} of {len(all_matches)} total matches.")
+        await interaction.response.send_message(embed=embed)
+
+    # 5b. /latest-match
+    @tree.command(
+        name="latest-match",
+        description="Display detailed information, scoreline, and player statistics for the latest match.",
+    )
+    async def latest_match(interaction: discord.Interaction) -> None:
+        err = check_guild_and_channel(interaction, config)
+        if err:
+            await interaction.response.send_message(f"❌ {err}", ephemeral=True)
+            return
+
+        all_matches = await excel_manager.get_all_matches()
+        if not all_matches:
+            await interaction.response.send_message(
+                "📋 No matches recorded yet in the workbook. Submit your first screenshot with `/add-match-image`!",
+                ephemeral=True,
+            )
+            return
+
+        latest = all_matches[-1]
+        embed = build_latest_match_embed(latest)
         await interaction.response.send_message(embed=embed)
 
     # 6. /teammates
