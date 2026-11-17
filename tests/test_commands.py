@@ -72,6 +72,8 @@ def test_command_registration_names(test_config: BotConfig, tmp_path: Path) -> N
         "rivalry",
         "predict",
         "predictions-leaderboard",
+        "say",
+        "Reply as Bot",
     }
     assert registered_names == expected_commands
 
@@ -1229,6 +1231,84 @@ async def test_latest_match_and_delete_latest_flow(test_config: BotConfig, tmp_p
     await modal.on_submit(inter_modal_submit)
     inter_modal_submit.response.send_message.assert_called_once()
     assert "M-20261116-000001" in inter_modal_submit.response.send_message.call_args[1]["embed"].title
+
+
+@pytest.mark.asyncio
+async def test_say_command_admin_and_modal_flow(test_config: BotConfig) -> None:
+    """Verifies /say command security checks, modal opening, and inline delivery."""
+    from commands_handler import SayModal
+
+    bot = EFootballBot(test_config)
+    say_cmd = bot.tree.get_command("say")
+    assert say_cmd is not None
+
+    # 1. Non-admin user gets rejected
+    inter_non_admin = MagicMock(spec=discord.Interaction)
+    inter_non_admin.guild = MagicMock(spec=discord.Guild)
+    inter_non_admin.guild_id = test_config.guild_id
+    inter_non_admin.channel_id = test_config.allowed_channel_id
+    member_user = MagicMock(spec=discord.Member)
+    member_user.guild_permissions.administrator = False
+    member_user.roles = []
+    inter_non_admin.user = member_user
+    inter_non_admin.response = MagicMock()
+    inter_non_admin.response.send_message = AsyncMock()
+
+    await say_cmd.callback(inter_non_admin, message="Hello")
+    inter_non_admin.response.send_message.assert_called_once()
+    assert "Only server administrators" in inter_non_admin.response.send_message.call_args[0][0]
+
+    # 2. Admin user without message opens SayModal
+    inter_admin = MagicMock(spec=discord.Interaction)
+    inter_admin.guild = MagicMock(spec=discord.Guild)
+    inter_admin.guild_id = test_config.guild_id
+    inter_admin.channel_id = test_config.allowed_channel_id
+    mock_channel = MagicMock(spec=discord.TextChannel)
+    mock_channel.send = AsyncMock()
+    inter_admin.channel = mock_channel
+    admin_user = MagicMock(spec=discord.Member)
+    admin_user.guild_permissions.administrator = True
+    inter_admin.user = admin_user
+    inter_admin.response = MagicMock()
+    inter_admin.response.send_modal = AsyncMock()
+
+    await say_cmd.callback(inter_admin, message=None)
+    inter_admin.response.send_modal.assert_called_once()
+    modal_arg = inter_admin.response.send_modal.call_args[0][0]
+    assert isinstance(modal_arg, SayModal)
+
+    # 3. SayModal submit sends message to channel
+    modal = SayModal(target_channel=mock_channel)
+    modal.message_input._value = "Hello from the bot!"
+    modal.reply_to_input._value = ""
+
+    inter_modal = MagicMock(spec=discord.Interaction)
+    inter_modal.response = MagicMock()
+    inter_modal.response.defer = AsyncMock()
+    inter_modal.followup = MagicMock()
+    inter_modal.followup.send = AsyncMock()
+
+    await modal.on_submit(inter_modal)
+    mock_channel.send.assert_called_once_with("Hello from the bot!")
+    inter_modal.followup.send.assert_called_once()
+    assert "Message sent as bot" in inter_modal.followup.send.call_args[0][0]
+
+    # 4. Inline /say execution
+    inter_inline = MagicMock(spec=discord.Interaction)
+    inter_inline.guild = MagicMock(spec=discord.Guild)
+    inter_inline.guild_id = test_config.guild_id
+    inter_inline.channel_id = test_config.allowed_channel_id
+    inter_inline.channel = mock_channel
+    inter_inline.user = admin_user
+    inter_inline.response = MagicMock()
+    inter_inline.response.defer = AsyncMock()
+    inter_inline.followup = MagicMock()
+    inter_inline.followup.send = AsyncMock()
+
+    await say_cmd.callback(inter_inline, message="Quick direct announcement!")
+    mock_channel.send.assert_called_with("Quick direct announcement!")
+    inter_inline.followup.send.assert_called_once()
+    assert "Message sent as bot" in inter_inline.followup.send.call_args[0][0]
 
 
 

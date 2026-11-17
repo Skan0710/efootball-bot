@@ -1080,6 +1080,57 @@ class EditSavedMatchModal(discord.ui.Modal, title="Edit Saved Match"):
         await interaction.response.send_message(embed=embed)
 
 
+class SayModal(discord.ui.Modal, title="Speak as Bot"):
+    """Modal for typing and dispatching messages as the bot."""
+
+    message_input = discord.ui.TextInput(
+        label="Message to Send",
+        style=discord.TextStyle.paragraph,
+        placeholder="Type what you want the bot to say...",
+        required=True,
+        max_length=2000,
+    )
+
+    reply_to_input = discord.ui.TextInput(
+        label="Reply to Message ID or Link (Optional)",
+        style=discord.TextStyle.short,
+        placeholder="Paste a Message ID or Message Link, or leave empty",
+        required=False,
+        max_length=150,
+    )
+
+    def __init__(self, target_channel: discord.abc.Messageable, default_reply_to: Optional[str] = None) -> None:
+        super().__init__()
+        self.target_channel = target_channel
+        if default_reply_to:
+            self.reply_to_input.default = default_reply_to.strip()
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(ephemeral=True)
+        content = self.message_input.value.strip()
+        reply_ref_raw = self.reply_to_input.value.strip()
+
+        reply_message = None
+        if reply_ref_raw:
+            m = re.search(r"(\d{15,22})", reply_ref_raw)
+            if m:
+                msg_id = int(m.group(1))
+                try:
+                    if hasattr(self.target_channel, "fetch_message"):
+                        reply_message = await self.target_channel.fetch_message(msg_id)
+                except Exception:
+                    reply_message = None
+
+        try:
+            if reply_message:
+                await reply_message.reply(content)
+            else:
+                await self.target_channel.send(content)
+            await interaction.followup.send("✅ Message sent as bot!", ephemeral=True)
+        except Exception as exc:
+            await interaction.followup.send(f"❌ Failed to send message: {exc}", ephemeral=True)
+
+
 def parse_fair_team_names(raw_names: str) -> List[str]:
     """Splits comma, newline, or ampersand separated player names cleanly."""
     if not raw_names:
@@ -3378,3 +3429,70 @@ def register_commands(
 
         embed.set_footer(text="Scoring: +1 pt correct outcome, +3 bonus pts exact score")
         await interaction.response.send_message(embed=embed)
+
+    # 17. /say (Speak as Bot)
+    @tree.command(
+        name="say",
+        description="Send a message in the channel as the bot (Admin only).",
+    )
+    @app_commands.describe(
+        message="Optional text to send immediately without opening modal",
+        reply_to="Optional Message ID or Message Link to reply to",
+    )
+    async def say(
+        interaction: discord.Interaction,
+        message: Optional[str] = None,
+        reply_to: Optional[str] = None,
+    ) -> None:
+        if not is_user_admin(interaction, config):
+            await interaction.response.send_message(
+                "❌ You do not have permission to use `/say`. Only server administrators can send messages as the bot.",
+                ephemeral=True,
+            )
+            return
+
+        target_channel = interaction.channel
+        if not isinstance(target_channel, discord.abc.Messageable) and interaction.guild and interaction.channel_id:
+            target_channel = interaction.guild.get_channel(interaction.channel_id)
+        if not isinstance(target_channel, discord.abc.Messageable):
+            await interaction.response.send_message("❌ Could not determine channel to send message.", ephemeral=True)
+            return
+
+        if not message:
+            modal = SayModal(target_channel=target_channel, default_reply_to=reply_to)
+            await interaction.response.send_modal(modal)
+            return
+
+        await interaction.response.defer(ephemeral=True)
+        reply_message = None
+        if reply_to:
+            m = re.search(r"(\d{15,22})", reply_to.strip())
+            if m:
+                try:
+                    if hasattr(target_channel, "fetch_message"):
+                        reply_message = await target_channel.fetch_message(int(m.group(1)))
+                except Exception:
+                    reply_message = None
+
+        try:
+            if reply_message:
+                await reply_message.reply(message.strip())
+            else:
+                await target_channel.send(message.strip())
+            await interaction.followup.send("✅ Message sent as bot!", ephemeral=True)
+        except Exception as exc:
+            await interaction.followup.send(f"❌ Failed to send message: {exc}", ephemeral=True)
+
+    # 18. Message Context Menu: Reply as Bot
+    @tree.context_menu(name="Reply as Bot")
+    async def reply_as_bot_ctx(interaction: discord.Interaction, target_message: discord.Message) -> None:
+        if not is_user_admin(interaction, config):
+            await interaction.response.send_message(
+                "❌ You do not have permission to use this command. Only server administrators can send messages as the bot.",
+                ephemeral=True,
+            )
+            return
+
+        target_channel = interaction.channel or target_message.channel
+        modal = SayModal(target_channel=target_channel, default_reply_to=str(target_message.id))
+        await interaction.response.send_modal(modal)
