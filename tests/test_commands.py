@@ -49,6 +49,7 @@ def test_command_registration_names(test_config: BotConfig, tmp_path: Path) -> N
         "matches",
         "latest-match",
         "pundit",
+        "gazette",
         "teammates",
         "potw",
         "potm",

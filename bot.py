@@ -9,7 +9,7 @@ from typing import Optional
 
 import discord
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
 
 from commands_handler import handle_pasted_match_message, register_commands
 from config import BotConfig, load_config, setup_logging
@@ -33,6 +33,7 @@ class EFootballBot(commands.Bot):
         self.bot_config = config
         self.guild_object = discord.Object(id=self.bot_config.guild_id)
         self.excel_manager = ExcelManager(self.bot_config.workbook_path)
+        self._last_gazette_published_week: Optional[str] = None
 
         # Register the 6 required slash commands
         register_commands(self.tree, self.bot_config, self.excel_manager)
@@ -71,6 +72,56 @@ class EFootballBot(commands.Bot):
         self.tree.copy_global_to(guild=self.guild_object)
         synced = await self.tree.sync(guild=self.guild_object)
         LOGGER.info("Synced %d slash commands to guild %s", len(synced), self.bot_config.guild_id)
+
+        # Start periodic weekly gazette automation
+        if not self.auto_gazette_task.is_running():
+            self.auto_gazette_task.start()
+
+    @tasks.loop(hours=2)
+    async def auto_gazette_task(self) -> None:
+        """Periodically checks if a new weekly Co-op Gazette edition should be published."""
+        try:
+            from ai_gazette import _get_current_week_key, build_gazette_embed, generate_gazette_edition
+
+            current_week = _get_current_week_key()
+            if self._last_gazette_published_week == current_week:
+                return
+
+            all_matches = await self.excel_manager.get_all_matches()
+            if not all_matches or len(all_matches) < 2:
+                return
+
+            target_channel_id = self.bot_config.allowed_channel_id
+            if not target_channel_id:
+                return
+
+            channel = self.get_channel(target_channel_id)
+            if not channel:
+                try:
+                    channel = await self.fetch_channel(target_channel_id)
+                except Exception:
+                    channel = None
+
+            if isinstance(channel, discord.abc.Messageable):
+                edition = await generate_gazette_edition(
+                    matches=all_matches,
+                    week_key=current_week,
+                    api_key=self.bot_config.groq_api_key,
+                    model=self.bot_config.groq_vision_model,
+                )
+                embed = build_gazette_embed(edition)
+                await channel.send(
+                    content="📢 **Fresh off the press! The latest edition of The Co-op Gazette has arrived!**",
+                    embed=embed,
+                )
+                self._last_gazette_published_week = current_week
+                LOGGER.info("Automatically published Co-op Gazette for week %s", current_week)
+        except Exception as exc:
+            LOGGER.warning("Auto gazette task encountered error: %s", exc)
+
+    @auto_gazette_task.before_loop
+    async def before_gazette_task(self) -> None:
+        await self.wait_until_ready()
 
     async def on_ready(self) -> None:
         """Invoked when the bot has connected to Discord and finished internal cache setup."""

@@ -2104,6 +2104,39 @@ def register_commands(
         embed = build_pundit_embed(review, target_match)
         await interaction.followup.send(embed=embed)
 
+    # 5d. /gazette
+    @tree.command(
+        name="gazette",
+        description="Read the latest satirical weekly newspaper issue of The Co-op Gazette.",
+    )
+    @app_commands.describe(week="Optional ISO week key (e.g. 2026-W47, defaults to current week)")
+    async def gazette(interaction: discord.Interaction, week: Optional[str] = None) -> None:
+        err = check_guild_and_channel(interaction, config)
+        if err:
+            await interaction.response.send_message(f"❌ {err}", ephemeral=True)
+            return
+
+        await interaction.response.defer()
+
+        all_matches = await excel_manager.get_all_matches()
+        if not all_matches:
+            await interaction.followup.send(
+                "📋 No matches recorded yet in the workbook to publish a gazette issue!",
+                ephemeral=True,
+            )
+            return
+
+        from ai_gazette import build_gazette_embed, generate_gazette_edition
+
+        edition = await generate_gazette_edition(
+            matches=all_matches,
+            week_key=week.strip() if week else None,
+            api_key=config.groq_api_key,
+            model=config.groq_vision_model,
+        )
+        embed = build_gazette_embed(edition)
+        await interaction.followup.send(embed=embed)
+
     # 6. /teammates
     @tree.command(
         name="teammates",

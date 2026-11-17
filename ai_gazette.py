@@ -1,0 +1,333 @@
+"""The Co-op Gazette: Satirical weekly newspaper engine for eFootball statistics.
+
+Generates entertaining weekly sports gazette editions featuring:
+- Sensationalist front-page headlines
+- The Week in Review / Matchday digest
+- Locker Room whispers & fictional transfer rumors
+- Stat of the week
+- Quote of the week
+
+Features token-efficient caching and resilient fallback generation.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime, timezone
+import json
+import logging
+import os
+from typing import Dict, List, Optional, Tuple
+
+import discord
+
+from models import MatchRecord, MatchResult
+
+try:
+    from groq import Groq
+except ImportError:
+    Groq = None
+
+LOGGER = logging.getLogger("efootball_bot.gazette")
+
+# In-memory edition cache: week_key -> GazetteEdition
+GAZETTE_CACHE: Dict[str, GazetteEdition] = {}
+
+# Tracks the last week auto-published to avoid duplicate announcements
+LAST_PUBLISHED_WEEK_KEY: Optional[str] = None
+
+
+@dataclass
+class GazetteEdition:
+    """Structured weekly sports newspaper issue."""
+
+    week_key: str
+    issue_number: int
+    headline: str
+    lead_story: str
+    matchday_digest: str
+    locker_room_rumor: str
+    stat_of_the_week: str
+    quote_of_the_week: str
+    is_ai_generated: bool = True
+
+
+def _get_current_week_key() -> str:
+    """Returns ISO calendar week string, e.g. '2026-W47'."""
+    now = datetime.now(timezone.utc)
+    iso_year, iso_week, _ = now.isocalendar()
+    return f"{iso_year}-W{iso_week:02d}"
+
+
+def _filter_matches_for_week(
+    matches: List[MatchRecord],
+    week_key: Optional[str] = None,
+) -> Tuple[str, List[MatchRecord]]:
+    """Filters matches by ISO week or falls back to recent matches if insufficient data."""
+    target_key = week_key or _get_current_week_key()
+    week_matches: List[MatchRecord] = []
+
+    for m in matches:
+        if not m.date:
+            continue
+        try:
+            # Parse 'YYYY-MM-DD HH:MM:SS' or ISO format
+            dt = datetime.fromisoformat(m.date.replace("Z", "+00:00"))
+        except Exception:
+            try:
+                dt = datetime.strptime(m.date[:19], "%Y-%m-%d %H:%M:%S")
+            except Exception:
+                continue
+
+        iso_y, iso_w, _ = dt.isocalendar()
+        if f"{iso_y}-W{iso_w:02d}" == target_key:
+            week_matches.append(m)
+
+    # If target week has fewer than 2 matches, use the last 5-10 matches
+    if len(week_matches) < 2 and len(matches) >= 2:
+        week_matches = matches[-8:]
+
+    return target_key, week_matches
+
+
+def _summarize_match_week(week_matches: List[MatchRecord]) -> dict:
+    """Aggregates player and match statistics for the target period."""
+    player_goals: Dict[str, int] = {}
+    player_assists: Dict[str, int] = {}
+    player_wins: Dict[str, int] = {}
+    player_matches: Dict[str, int] = {}
+
+    for m in week_matches:
+        for ps in m.player_stats:
+            p = ps.player
+            player_goals[p] = player_goals.get(p, 0) + ps.goals
+            player_assists[p] = player_assists.get(p, 0) + ps.assists
+            player_matches[p] = player_matches.get(p, 0) + 1
+            if ps.result in (MatchResult.WIN, MatchResult.HOME_WIN):
+                player_wins[p] = player_wins.get(p, 0) + 1
+
+    top_scorer = max(player_goals.items(), key=lambda x: x[1]) if player_goals else ("None", 0)
+    top_assister = max(player_assists.items(), key=lambda x: x[1]) if player_assists else ("None", 0)
+    most_active = max(player_matches.items(), key=lambda x: x[1]) if player_matches else ("None", 0)
+
+    # Find biggest scoreline
+    biggest_match = week_matches[-1] if week_matches else None
+
+    return {
+        "match_count": len(week_matches),
+        "top_scorer": top_scorer,
+        "top_assister": top_assister,
+        "most_active": most_active,
+        "active_players": list(player_matches.keys()),
+        "biggest_match": biggest_match,
+    }
+
+
+def _rule_based_fallback_edition(week_key: str, summary: dict, issue_num: int) -> GazetteEdition:
+    """Deterministic, zero-token newspaper edition."""
+    scorer_name, scorer_goals = summary["top_scorer"]
+    playmaker_name, playmaker_assists = summary["top_assister"]
+    active = summary["active_players"]
+
+    second_player = active[1] if len(active) > 1 else "The Squad"
+
+    headline = f"WEEKLY MAYHEM: {scorer_name.upper()} RUNS THE PITCH AS RIVALS SEEK ANSWERS!"
+    lead_story = (
+        f"A pulsating week of co-op action saw {summary['match_count']} fixtures contested across the lobby. "
+        f"{scorer_name} spearheaded the attack with {scorer_goals} goal(s), leaving defenders clutching at shadows. "
+        f"Meanwhile, {playmaker_name} pulled the strings from the midfield, dishing out {playmaker_assists} assist(s)."
+    )
+    digest = (
+        f"• **Fixtures Played:** {summary['match_count']}\n"
+        f"• **Golden Boot of the Week:** {scorer_name} ({scorer_goals} Goals)\n"
+        f"• **Playmaker of the Week:** {playmaker_name} ({playmaker_assists} Assists)\n"
+        f"• **Active Lineup:** {', '.join(active[:6])}"
+    )
+    rumor = (
+        f"Insiders claim {second_player} was spotted testing third-party controllers in practice after "
+        f"complaining of 'unprecedented script delay' during Friday's late fixture."
+    )
+    stat = (
+        f"{scorer_name} scored more goals this week ({scorer_goals}) than the bottom three players combined."
+    )
+    quote = (
+        f'"{scorer_name} has the finishing touch right now, but wait until the ping spikes next weekend." — Anonymous Teammate'
+    )
+
+    return GazetteEdition(
+        week_key=week_key,
+        issue_number=issue_num,
+        headline=headline,
+        lead_story=lead_story,
+        matchday_digest=digest,
+        locker_room_rumor=rumor,
+        stat_of_the_week=stat,
+        quote_of_the_week=quote,
+        is_ai_generated=False,
+    )
+
+
+async def generate_gazette_edition(
+    matches: List[MatchRecord],
+    week_key: Optional[str] = None,
+    api_key: Optional[str] = None,
+    model: str = "qwen/qwen3.8-27b",
+    timeout_seconds: float = 20.0,
+) -> GazetteEdition:
+    """Generates or retrieves a cached weekly Gazette edition."""
+    resolved_week, week_matches = _filter_matches_for_week(matches, week_key)
+
+    if resolved_week in GAZETTE_CACHE:
+        return GAZETTE_CACHE[resolved_week]
+
+    summary = _summarize_match_week(week_matches)
+    issue_num = len(matches) // 5 + 1
+
+    resolved_key = api_key or os.getenv("GROQ_API_KEY", "").strip() or None
+    if not resolved_key or not week_matches:
+        edition = _rule_based_fallback_edition(resolved_week, summary, issue_num)
+        GAZETTE_CACHE[resolved_week] = edition
+        return edition
+
+    scorer_name, scorer_goals = summary["top_scorer"]
+    playmaker_name, playmaker_assists = summary["top_assister"]
+    active_str = ", ".join(summary["active_players"])
+
+    prompt = (
+        "You are the chief sports editor of 'The Co-op Gazette', a satirical sports newspaper for an eFootball co-op friend group.\n"
+        f"Week: {resolved_week} (Issue #{issue_num})\n"
+        f"Fixtures Contested: {summary['match_count']}\n"
+        f"Top Scorer: {scorer_name} ({scorer_goals} goals)\n"
+        f"Top Playmaker: {playmaker_name} ({playmaker_assists} assists)\n"
+        f"Active Players: {active_str}\n\n"
+        "Generate a JSON object with EXACTLY five concise string fields (keep total length under 250 words to minimize tokens):\n"
+        "- 'headline': Punchy, sensationalist front-page sports tabloid headline (ALL CAPS).\n"
+        "- 'lead_story': 2-3 sentence humorous breakdown of this week's top performer and biggest clash.\n"
+        "- 'locker_room_rumor': 1-2 sentence satirical transfer rumor, contract dispute, or locker room gossip.\n"
+        "- 'stat_of_the_week': 1 funny or exaggerated statistical comparison featuring one of the players.\n"
+        "- 'quote_of_the_week': A fake post-match quote from a player offering excuses (lag, script, controller drift).\n"
+        "Output valid JSON only."
+    )
+
+    try:
+        content_str: Optional[str] = None
+        if Groq is not None:
+            try:
+                client = Groq(api_key=resolved_key, timeout=timeout_seconds)
+                response = client.chat.completions.create(
+                    model=model,
+                    messages=[{"role": "user", "content": prompt}],
+                    response_format={"type": "json_object"},
+                    max_tokens=350,
+                    temperature=0.75,
+                )
+                content_str = response.choices[0].message.content
+            except Exception as exc:
+                LOGGER.warning("Gazette Groq SDK call failed: %s; trying HTTP fallback", exc)
+
+        if not content_str:
+            import httpx
+
+            headers = {
+                "Authorization": f"Bearer {resolved_key}",
+                "Content-Type": "application/json",
+            }
+            body = {
+                "model": model,
+                "messages": [{"role": "user", "content": prompt}],
+                "response_format": {"type": "json_object"},
+                "max_tokens": 350,
+                "temperature": 0.75,
+            }
+            with httpx.Client(timeout=timeout_seconds) as http_client:
+                r = http_client.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=body)
+                if r.status_code == 200:
+                    data = r.json()
+                    content_str = data["choices"][0]["message"]["content"]
+                else:
+                    LOGGER.warning("Gazette API HTTP %d: %s", r.status_code, r.text[:200])
+
+        if content_str:
+            clean_json = content_str.strip()
+            if clean_json.startswith("```json"):
+                clean_json = clean_json[7:]
+            if clean_json.startswith("```"):
+                clean_json = clean_json[3:]
+            if clean_json.endswith("```"):
+                clean_json = clean_json[:-3]
+            parsed = json.loads(clean_json.strip())
+
+            headline = str(parsed.get("headline", "")).strip()
+            lead = str(parsed.get("lead_story", "")).strip()
+            rumor = str(parsed.get("locker_room_rumor", "")).strip()
+            stat = str(parsed.get("stat_of_the_week", "")).strip()
+            quote = str(parsed.get("quote_of_the_week", "")).strip()
+
+            digest = (
+                f"• **Fixtures Contested:** {summary['match_count']}\n"
+                f"• **Golden Boot:** {scorer_name} ({scorer_goals} Goals)\n"
+                f"• **Chief Playmaker:** {playmaker_name} ({playmaker_assists} Assists)\n"
+                f"• **Roster:** {', '.join(summary['active_players'][:6])}"
+            )
+
+            if headline and lead:
+                edition = GazetteEdition(
+                    week_key=resolved_week,
+                    issue_number=issue_num,
+                    headline=headline,
+                    lead_story=lead,
+                    matchday_digest=digest,
+                    locker_room_rumor=rumor or "Transfer windows remain active as managers scout fresh co-op talent.",
+                    stat_of_the_week=stat or f"{scorer_name} recorded {scorer_goals} goals this week.",
+                    quote_of_the_week=quote or '"The controller simply lost connection during the penalty." — Anonymous',
+                    is_ai_generated=True,
+                )
+                GAZETTE_CACHE[resolved_week] = edition
+                return edition
+    except Exception as exc:
+        LOGGER.warning("Error generating AI Gazette edition: %s; falling back to template", exc)
+
+    edition = _rule_based_fallback_edition(resolved_week, summary, issue_num)
+    GAZETTE_CACHE[resolved_week] = edition
+    return edition
+
+
+def build_gazette_embed(edition: GazetteEdition) -> discord.Embed:
+    """Builds a newspaper-style Discord embed for The Co-op Gazette."""
+    embed = discord.Embed(
+        title=f"🗞️ THE CO-OP GAZETTE — Issue #{edition.issue_number}",
+        description=f"# 📢 {edition.headline}\n\n{edition.lead_story}",
+        color=discord.Color.from_rgb(44, 47, 51),
+        timestamp=datetime.now(),
+    )
+
+    embed.add_field(
+        name="📊 The Matchday Digest",
+        value=edition.matchday_digest,
+        inline=False,
+    )
+    embed.add_field(
+        name="🕵️ Locker Room Whispers & Transfer Talk",
+        value=edition.locker_room_rumor,
+        inline=False,
+    )
+    embed.add_field(
+        name="📈 Stat of the Week",
+        value=edition.stat_of_the_week,
+        inline=True,
+    )
+    embed.add_field(
+        name="💬 Quote of the Week",
+        value=edition.quote_of_the_week,
+        inline=True,
+    )
+
+    footer = f"The Co-op Gazette • Edition {edition.week_key}"
+    if edition.is_ai_generated:
+        footer += " • AI Press Room"
+    else:
+        footer += " • Editorial Desk"
+    footer += " • /gazette"
+
+    embed.set_footer(text=footer)
+    return embed
