@@ -41,12 +41,20 @@ def _load_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont | ImageF
         return ImageFont.load_default()
 
 
+def _resolve_default_pfp_dir() -> Path:
+    """Returns the pfp directory path, resolving root or local location."""
+    root_pfp = Path(__file__).resolve().parent.parent / "pfp"
+    if root_pfp.exists() and root_pfp.is_dir():
+        return root_pfp
+    return Path(__file__).resolve().parent / "pfp"
+
+
 def _find_player_pfp(player_name: str, pfp_dir: Optional[Path] = None) -> Optional[Path]:
     """Locates an avatar image for the player in the pfp directory if present.
 
     Searches for exact name, lowercase name, canonical name, and alias variants.
     """
-    directory = pfp_dir or (Path(__file__).resolve().parent / "pfp")
+    directory = pfp_dir or _resolve_default_pfp_dir()
     if not directory.exists() or not directory.is_dir():
         return None
 
@@ -80,7 +88,7 @@ def _find_player_pfp(player_name: str, pfp_dir: Optional[Path] = None) -> Option
 
 def _find_team_logo(pfp_dir: Optional[Path] = None) -> Optional[Path]:
     """Locates the club crest / team logo in the pfp directory if present."""
-    directory = pfp_dir or (Path(__file__).resolve().parent / "pfp")
+    directory = pfp_dir or _resolve_default_pfp_dir()
     if not directory.exists() or not directory.is_dir():
         return None
     for name in ["teamlogo.jpg", "teamlogo.png", "teamlogo.jpeg", "team_logo.png", "team_logo.jpg", "logo.png", "logo.jpg"]:

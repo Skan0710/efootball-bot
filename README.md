@@ -240,7 +240,7 @@ pip install -r requirements.txt
 
 Start the bot:
 ```powershell
-python bot.py
+python src/bot.py
 ```
 
 Expected startup output:
