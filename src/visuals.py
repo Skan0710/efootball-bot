@@ -9,7 +9,7 @@ from typing import Dict, List, Optional, Tuple
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
-from models import canonicalize_player_name
+from models import MatchRecord, MatchResult, canonicalize_player_name
 
 
 def _load_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
