@@ -737,6 +737,20 @@ class MatchPreviewView(discord.ui.View):
                     banner_file = discord.File(fp=banner_buf, filename=banner_filename)
                     announce_embed.set_image(url=f"attachment://{banner_filename}")
                     await interaction.channel.send(embed=announce_embed, file=banner_file)
+
+                    # Automatic Pundit Desk Review
+                    try:
+                        from ai_pundit import generate_pundit_review, build_pundit_embed
+
+                        pundit_scoreline = format_match_scoreline(record)
+                        p_review = await generate_pundit_review(
+                            record,
+                            scoreline=pundit_scoreline,
+                        )
+                        p_embed = build_pundit_embed(p_review, record)
+                        await interaction.channel.send(embed=p_embed)
+                    except Exception as p_exc:
+                        LOGGER.warning("Automatic pundit breakdown failed: %s", p_exc)
                 except Exception as pub_exc:
                     LOGGER.debug("Skipping public match announcement: %s", pub_exc)
 
@@ -2042,6 +2056,53 @@ def register_commands(
         latest = all_matches[-1]
         embed = build_latest_match_embed(latest)
         await interaction.response.send_message(embed=embed)
+
+    # 5c. /pundit
+    @tree.command(
+        name="pundit",
+        description="Get a three-mode Pundit Desk review (Peter Drury praise, Roy Keane roast & Locker Room banter).",
+    )
+    @app_commands.describe(match_id="Optional Match ID to review (defaults to the latest match)")
+    async def pundit(interaction: discord.Interaction, match_id: Optional[str] = None) -> None:
+        err = check_guild_and_channel(interaction, config)
+        if err:
+            await interaction.response.send_message(f"❌ {err}", ephemeral=True)
+            return
+
+        await interaction.response.defer()
+
+        all_matches = await excel_manager.get_all_matches()
+        if not all_matches:
+            await interaction.followup.send(
+                "📋 No matches recorded yet in the workbook. Submit your first screenshot with `/submit-match`!",
+                ephemeral=True,
+            )
+            return
+
+        target_match: Optional[MatchRecord] = None
+        if match_id and match_id.strip():
+            clean_id = match_id.strip().upper()
+            target_match = next((m for m in all_matches if m.match_id.upper() == clean_id), None)
+            if not target_match:
+                await interaction.followup.send(
+                    f"❌ Match **{match_id}** could not be found in the workbook.",
+                    ephemeral=True,
+                )
+                return
+        else:
+            target_match = all_matches[-1]
+
+        from ai_pundit import build_pundit_embed, generate_pundit_review
+
+        scoreline = format_match_scoreline(target_match)
+        review = await generate_pundit_review(
+            target_match,
+            scoreline=scoreline,
+            api_key=config.groq_api_key,
+            model=config.groq_vision_model,
+        )
+        embed = build_pundit_embed(review, target_match)
+        await interaction.followup.send(embed=embed)
 
     # 6. /teammates
     @tree.command(
