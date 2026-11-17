@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 
@@ -189,11 +190,11 @@ async def generate_pundit_review(
         f"Match ID: {match.match_id}\n"
         f"Scoreline & Outcome: {scoreline} ({match.result.value})\n"
         f"Stats: {' | '.join(stats_summary)}\n\n"
-        "Generate a JSON object with EXACTLY three string keys (keep each under 60 words for concise token efficiency):\n"
+        "Generate a JSON object with EXACTLY three string keys reviewing THIS SPECIFIC MATCH ONLY (keep each under 60 words for concise token efficiency):\n"
         "- 'drury': Poetic, dramatic Peter Drury commentary praising the standout winners or clutch drama.\n"
         "- 'keane': Roy Keane brutal roast tearing into the worst performer, chokers, or players with 0G/0A.\n"
         "- 'locker_room': Witty locker room / Discord voice chat banter about lag, script, controllers, and who carried whom.\n"
-        "Output valid JSON only."
+        "CRITICAL: Do NOT use internal double quotes (\") inside any field values. Use single quotes (') instead. Output valid JSON only."
     )
 
     try:
@@ -214,6 +215,10 @@ async def generate_pundit_review(
                         break
                 except Exception as exc:
                     LOGGER.warning("Pundit key #%d failed via SDK: %s; trying HTTP/failover", attempt_idx + 1, exc)
+                    body = getattr(exc, "body", None)
+                    if isinstance(body, dict) and "failed_generation" in body and body["failed_generation"]:
+                        content_str = body["failed_generation"]
+                        break
 
             if not content_str:
                 try:
@@ -250,7 +255,18 @@ async def generate_pundit_review(
                 clean_json = clean_json[3:]
             if clean_json.endswith("```"):
                 clean_json = clean_json[:-3]
-            parsed = json.loads(clean_json.strip())
+            try:
+                parsed = json.loads(clean_json.strip())
+            except Exception:
+                parsed = {}
+                for fkey, fpat in [
+                    ("drury", r'"drury"\s*:\s*"((?:[^"\\]|\\.)*)"'),
+                    ("keane", r'"keane"\s*:\s*"((?:[^"\\]|\\.)*)"'),
+                    ("locker_room", r'"locker_room"\s*:\s*"((?:[^"\\]|\\.)*)"'),
+                ]:
+                    m = re.search(fpat, clean_json, re.DOTALL)
+                    if m:
+                        parsed[fkey] = m.group(1).replace('\\"', '"')
 
             drury = str(parsed.get("drury", "")).strip()
             keane = str(parsed.get("keane", "")).strip()

@@ -547,6 +547,7 @@ class MatchPreviewView(discord.ui.View):
         away_candidates: Optional[List[OCRPlayerCandidate]] = None,
         notes: str = "",
         error_note: Optional[str] = None,
+        config: Optional[BotConfig] = None,
         timeout: float = 300.0,
     ) -> None:
         super().__init__(timeout=timeout)
@@ -562,6 +563,7 @@ class MatchPreviewView(discord.ui.View):
         self.away_candidates = away_candidates or []
         self.notes = notes
         self.error_note = error_note
+        self.config = config
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.submitting_user_id:
@@ -687,8 +689,18 @@ class MatchPreviewView(discord.ui.View):
 
             await interaction.edit_original_response(embed=success_embed, view=self)
 
-            # Announce MOTM & Milestones publicly in the channel if available
-            if isinstance(getattr(interaction, "channel", None), discord.abc.Messageable):
+            # Announce MOTM, Milestones & AI Pundit review publicly in the channel
+            target_channel = interaction.channel
+            if not isinstance(target_channel, discord.abc.Messageable) and interaction.guild:
+                if interaction.channel_id:
+                    target_channel = interaction.guild.get_channel(interaction.channel_id)
+                if not isinstance(target_channel, discord.abc.Messageable) and getattr(self, "config", None) and self.config.allowed_channel_id:
+                    target_channel = interaction.guild.get_channel(self.config.allowed_channel_id)
+            if not isinstance(target_channel, discord.abc.Messageable) and getattr(self, "config", None) and self.config.allowed_channel_id:
+                if getattr(interaction, "client", None):
+                    target_channel = interaction.client.get_channel(self.config.allowed_channel_id)
+
+            if isinstance(target_channel, discord.abc.Messageable):
                 try:
                     announce_embed = discord.Embed(
                         title=f"📣 Match Saved — {format_match_scoreline(record)}",
@@ -725,34 +737,46 @@ class MatchPreviewView(discord.ui.View):
                             inline=False,
                         )
 
-                    banner_buf = render_match_summary_card(
-                        record,
-                        self.home_team,
-                        self.away_team,
-                        h_val,
-                        a_val,
-                        self.result,
-                    )
-                    banner_filename = f"match_summary_{record.match_id}.png"
-                    banner_file = discord.File(fp=banner_buf, filename=banner_filename)
-                    announce_embed.set_image(url=f"attachment://{banner_filename}")
-                    await interaction.channel.send(embed=announce_embed, file=banner_file)
-
-                    # Automatic Pundit Desk Review
+                    banner_file: Optional[discord.File] = None
                     try:
-                        from ai_pundit import generate_pundit_review, build_pundit_embed
-
-                        pundit_scoreline = format_match_scoreline(record)
-                        p_review = await generate_pundit_review(
+                        banner_buf = render_match_summary_card(
                             record,
-                            scoreline=pundit_scoreline,
+                            self.home_team,
+                            self.away_team,
+                            h_val,
+                            a_val,
+                            self.result,
                         )
-                        p_embed = build_pundit_embed(p_review, record)
-                        await interaction.channel.send(embed=p_embed)
-                    except Exception as p_exc:
-                        LOGGER.warning("Automatic pundit breakdown failed: %s", p_exc)
+                        banner_filename = f"match_summary_{record.match_id}.png"
+                        banner_file = discord.File(fp=banner_buf, filename=banner_filename)
+                        announce_embed.set_image(url=f"attachment://{banner_filename}")
+                    except Exception as card_exc:
+                        LOGGER.warning("Could not render match summary card: %s", card_exc)
+
+                    if banner_file:
+                        await target_channel.send(embed=announce_embed, file=banner_file)
+                    else:
+                        await target_channel.send(embed=announce_embed)
                 except Exception as pub_exc:
-                    LOGGER.debug("Skipping public match announcement: %s", pub_exc)
+                    LOGGER.warning("Public match announcement failed: %s", pub_exc)
+
+                # Automatic AI Pundit Desk Review (Performance-based Drury, Keane, and Locker Room strictly for this match)
+                try:
+                    from ai_pundit import build_pundit_embed, generate_pundit_review
+
+                    pundit_scoreline = format_match_scoreline(record)
+                    api_key = self.config.groq_api_key if self.config else None
+                    model = self.config.groq_vision_model if self.config else "qwen/qwen3.8-27b"
+                    p_review = await generate_pundit_review(
+                        record,
+                        scoreline=pundit_scoreline,
+                        api_key=api_key,
+                        model=model,
+                    )
+                    p_embed = build_pundit_embed(p_review, record)
+                    await target_channel.send(embed=p_embed)
+                except Exception as p_exc:
+                    LOGGER.warning("Automatic pundit breakdown failed: %s", p_exc)
 
             LOGGER.info("Match %s saved by user %s (%s)", match_id, interaction.user.name, interaction.user.id)
         except PermissionError:
@@ -835,9 +859,10 @@ class AddMatchTextModal(discord.ui.Modal, title="Edit Match Players, Stats & Res
         max_length=20,
     )
 
-    def __init__(self, excel_manager: ExcelManager) -> None:
+    def __init__(self, excel_manager: ExcelManager, config: Optional[BotConfig] = None) -> None:
         super().__init__()
         self.excel_manager = excel_manager
+        self.config = config
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         new_home_c, home_errs = parse_modal_candidate_lines(self.home_stats_input.value, prefix="Home")
@@ -899,6 +924,7 @@ class AddMatchTextModal(discord.ui.Modal, title="Edit Match Players, Stats & Res
             away_score=a_score,
             away_candidates=new_away_c,
             notes=score_note,
+            config=self.config,
         )
 
         await interaction.response.send_message(embed=preview_embed, view=view, ephemeral=True)
@@ -1366,6 +1392,7 @@ async def handle_pasted_match_message(
             away_score=away_score,
             away_candidates=away_candidates,
             error_note=ocr_1.error_reason if not ocr_1.success else None,
+            config=config,
         )
 
         view = MatchPreviewView(
@@ -1380,6 +1407,7 @@ async def handle_pasted_match_message(
             away_score=away_score,
             away_candidates=away_candidates,
             error_note=ocr_1.error_reason if not ocr_1.success else None,
+            config=config,
         )
 
         await message.reply(
@@ -1620,6 +1648,7 @@ def register_commands(
                 away_candidates=away_candidates,
                 notes=score_note,
                 error_note=error_notice,
+                config=config,
             )
 
             await interaction.followup.send(embed=preview_embed, view=view, ephemeral=True)
@@ -1647,7 +1676,7 @@ def register_commands(
             await interaction.response.send_message(f"❌ {err}", ephemeral=True)
             return
 
-        modal = AddMatchTextModal(excel_manager=excel_manager)
+        modal = AddMatchTextModal(excel_manager=excel_manager, config=config)
         await interaction.response.send_modal(modal)
 
     # 2. /delete-match
@@ -2107,10 +2136,17 @@ def register_commands(
     # 5d. /gazette
     @tree.command(
         name="gazette",
-        description="Read the latest satirical weekly newspaper issue of The Co-op Gazette.",
+        description="Read The Co-op Gazette — matchday special for a specific match or weekly tabloid edition.",
     )
-    @app_commands.describe(week="Optional ISO week key (e.g. 2026-W47, defaults to current week)")
-    async def gazette(interaction: discord.Interaction, week: Optional[str] = None) -> None:
+    @app_commands.describe(
+        target="Optional Match ID or ISO week key (e.g. M-20261029-XXXXXX or 2026-W47; defaults to latest match)",
+        week="Optional ISO week key (legacy alias)",
+    )
+    async def gazette(
+        interaction: discord.Interaction,
+        target: Optional[str] = None,
+        week: Optional[str] = None,
+    ) -> None:
         err = check_guild_and_channel(interaction, config)
         if err:
             await interaction.response.send_message(f"❌ {err}", ephemeral=True)
@@ -2126,15 +2162,51 @@ def register_commands(
             )
             return
 
-        from ai_gazette import build_gazette_embed, generate_gazette_edition
-
-        edition = await generate_gazette_edition(
-            matches=all_matches,
-            week_key=week.strip() if week else None,
-            api_key=config.groq_api_key,
-            model=config.groq_vision_model,
+        from ai_gazette import (
+            build_gazette_embed,
+            generate_gazette_edition,
+            generate_match_gazette,
         )
-        embed = build_gazette_embed(edition)
+
+        query = (target or week or "").strip()
+        is_week_query = False
+        if query:
+            upper_q = query.upper()
+            if not upper_q.startswith("M-"):
+                if re.match(r"^\d{4}-W\d{1,2}$", upper_q) or upper_q.startswith("WEEK") or (upper_q.startswith("202") and len(upper_q) <= 8):
+                    is_week_query = True
+
+        if is_week_query:
+            edition = await generate_gazette_edition(
+                matches=all_matches,
+                week_key=query,
+                api_key=config.groq_api_key,
+                model=config.groq_vision_model,
+            )
+            embed = build_gazette_embed(edition)
+        else:
+            target_match: Optional[MatchRecord] = None
+            if query:
+                clean_id = query.upper()
+                target_match = next((m for m in all_matches if m.match_id.upper() == clean_id), None)
+                if not target_match:
+                    await interaction.followup.send(
+                        f"❌ Match **{query}** could not be found in the workbook.",
+                        ephemeral=True,
+                    )
+                    return
+            else:
+                target_match = all_matches[-1]
+
+            scoreline = format_match_scoreline(target_match)
+            edition = await generate_match_gazette(
+                target_match,
+                scoreline=scoreline,
+                api_key=config.groq_api_key,
+                model=config.groq_vision_model,
+            )
+            embed = build_gazette_embed(edition, match=target_match)
+
         await interaction.followup.send(embed=embed)
 
     # 6. /teammates
