@@ -31,7 +31,24 @@ class BotConfig:
     delete_password: str = "Skan6243"
     log_level: str = "INFO"
     groq_api_key: Optional[str] = None
+    groq_api_key_secondary: Optional[str] = None
     groq_vision_model: str = "qwen/qwen3.8-27b"
+
+    @property
+    def groq_api_keys(self) -> List[str]:
+        """Returns non-empty unique API keys in priority order for automatic failover."""
+        keys: List[str] = []
+        if self.groq_api_key:
+            for k in self.groq_api_key.split(","):
+                k_clean = k.strip()
+                if k_clean and k_clean not in keys:
+                    keys.append(k_clean)
+        if self.groq_api_key_secondary:
+            for k in self.groq_api_key_secondary.split(","):
+                k_clean = k.strip()
+                if k_clean and k_clean not in keys:
+                    keys.append(k_clean)
+        return keys
 
     @property
     def max_image_bytes(self) -> int:
@@ -128,6 +145,11 @@ def load_config(env_path: Optional[str | Path] = None, require_token: bool = Tru
     delete_password = os.getenv("DELETE_PASSWORD", "Skan6243").strip() or "Skan6243"
     log_level = os.getenv("LOG_LEVEL", "INFO").strip().upper()
     groq_api_key = os.getenv("GROQ_API_KEY", "").strip() or None
+    groq_api_key_secondary = (
+        os.getenv("GROQ_API_KEY_SECONDARY", "").strip()
+        or os.getenv("GROQ_API_KEY_BACKUP", "").strip()
+        or None
+    )
     groq_vision_model = os.getenv("GROQ_VISION_MODEL", "qwen/qwen3.8-27b").strip() or "qwen/qwen3.8-27b"
 
     return BotConfig(
@@ -141,5 +163,6 @@ def load_config(env_path: Optional[str | Path] = None, require_token: bool = Tru
         delete_password=delete_password,
         log_level=log_level,
         groq_api_key=groq_api_key,
+        groq_api_key_secondary=groq_api_key_secondary,
         groq_vision_model=groq_vision_model,
     )

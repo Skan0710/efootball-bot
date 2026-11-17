@@ -61,4 +61,21 @@ def test_load_config_valid_defaults(monkeypatch: pytest.MonkeyPatch, tmp_path: P
     assert cfg.allowed_channel_id is None
     assert cfg.admin_role_id is None
     assert cfg.groq_api_key is None
+    assert cfg.groq_api_key_secondary is None
+    assert cfg.groq_api_keys == []
     assert cfg.groq_vision_model == "qwen/qwen3.8-27b"
+
+
+def test_multi_api_key_failover_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Verifies that primary and secondary API keys are loaded into priority failover list."""
+    env_file = tmp_path / "keys.env"
+    env_file.write_text(
+        "DISCORD_BOT_TOKEN=tok\n"
+        "DISCORD_GUILD_ID=12345\n"
+        "GROQ_API_KEY=primary_key_1\n"
+        "GROQ_API_KEY_SECONDARY=secondary_key_2\n"
+    )
+    cfg = load_config(env_path=env_file, require_token=True)
+    assert cfg.groq_api_key == "primary_key_1"
+    assert cfg.groq_api_key_secondary == "secondary_key_2"
+    assert cfg.groq_api_keys == ["primary_key_1", "secondary_key_2"]

@@ -31,6 +31,32 @@ except ImportError:
 LOGGER = logging.getLogger("efootball_bot.ocr")
 
 
+def resolve_api_keys(api_key: Optional[str] = None) -> List[str]:
+    """Resolves primary and fallback API keys from parameters and environment variables."""
+    keys: List[str] = []
+    if api_key:
+        for k in api_key.split(","):
+            c = k.strip()
+            if c and c not in keys:
+                keys.append(c)
+    env_primary = os.getenv("GROQ_API_KEY", "").strip()
+    if env_primary:
+        for k in env_primary.split(","):
+            c = k.strip()
+            if c and c not in keys:
+                keys.append(c)
+    env_sec = (
+        os.getenv("GROQ_API_KEY_SECONDARY", "").strip()
+        or os.getenv("GROQ_API_KEY_BACKUP", "").strip()
+    )
+    if env_sec:
+        for k in env_sec.split(","):
+            c = k.strip()
+            if c and c not in keys:
+                keys.append(c)
+    return keys
+
+
 @dataclass
 class LayoutConfig:
     """Configurable layout ratios for eFootball match details screen."""
@@ -388,8 +414,8 @@ def extract_via_vision_ai(
     if not path.exists():
         return None
 
-    resolved_key = api_key or os.getenv("GROQ_API_KEY", "").strip()
-    if not resolved_key:
+    resolved_keys = resolve_api_keys(api_key)
+    if not resolved_keys:
         return None
 
     try:
@@ -431,63 +457,67 @@ def extract_via_vision_ai(
 
     content_str: Optional[str] = None
 
-    # 1. Try official groq SDK if installed
-    if Groq is not None:
-        try:
-            client = Groq(api_key=resolved_key, timeout=timeout_seconds)
-            response = client.chat.completions.create(
-                model=model,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": prompt},
-                            {"type": "image_url", "image_url": {"url": data_url}},
-                        ],
-                    }
-                ],
-                temperature=0.1,
-                max_tokens=1000,
-                response_format={"type": "json_object"},
-            )
-            content_str = response.choices[0].message.content
-        except Exception as exc:
-            LOGGER.warning("Groq SDK execution failed: %s; trying HTTP fallback", exc)
+    for attempt_idx, key in enumerate(resolved_keys):
+        # 1. Try official groq SDK if installed
+        if Groq is not None:
+            try:
+                client = Groq(api_key=key, timeout=timeout_seconds)
+                response = client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": prompt},
+                                {"type": "image_url", "image_url": {"url": data_url}},
+                            ],
+                        }
+                    ],
+                    temperature=0.1,
+                    max_tokens=1000,
+                    response_format={"type": "json_object"},
+                )
+                content_str = response.choices[0].message.content
+                if content_str:
+                    break
+            except Exception as exc:
+                LOGGER.warning("Vision AI key #%d failed via SDK: %s; trying HTTP/failover", attempt_idx + 1, exc)
 
-    # 2. HTTP fallback via httpx if SDK call was unsuccessful
-    if not content_str:
-        try:
-            import httpx
-            headers = {
-                "Authorization": f"Bearer {resolved_key}",
-                "Content-Type": "application/json",
-            }
-            body = {
-                "model": model,
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": prompt},
-                            {"type": "image_url", "image_url": {"url": data_url}},
-                        ],
-                    }
-                ],
-                "temperature": 0.1,
-                "max_tokens": 1000,
-                "response_format": {"type": "json_object"},
-            }
-            with httpx.Client(timeout=timeout_seconds) as http_client:
-                r = http_client.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=body)
-                if r.status_code == 200:
-                    resp_data = r.json()
-                    content_str = resp_data["choices"][0]["message"]["content"]
-                else:
-                    LOGGER.warning("Vision API returned HTTP %d: %s", r.status_code, r.text[:300])
-                    return None
-        except Exception as exc:
-            LOGGER.warning("Vision API HTTP fallback failed: %s", exc)
-            return None
+        # 2. HTTP fallback via httpx if SDK call was unsuccessful with this key
+        if not content_str:
+            try:
+                import httpx
+
+                headers = {
+                    "Authorization": f"Bearer {key}",
+                    "Content-Type": "application/json",
+                }
+                body = {
+                    "model": model,
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": prompt},
+                                {"type": "image_url", "image_url": {"url": data_url}},
+                            ],
+                        }
+                    ],
+                    "temperature": 0.1,
+                    "max_tokens": 1000,
+                    "response_format": {"type": "json_object"},
+                }
+                with httpx.Client(timeout=timeout_seconds) as http_client:
+                    r = http_client.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=body)
+                    if r.status_code == 200:
+                        resp_data = r.json()
+                        content_str = resp_data["choices"][0]["message"]["content"]
+                        if content_str:
+                            break
+                    else:
+                        LOGGER.warning("Vision API key #%d returned HTTP %d: %s", attempt_idx + 1, r.status_code, r.text[:200])
+            except Exception as exc:
+                LOGGER.warning("Vision API key #%d failed via HTTP: %s", attempt_idx + 1, exc)
 
     if not content_str:
         return None
@@ -567,11 +597,11 @@ def extract_player_stats_from_screenshot(
         return OCRResult(success=False, error_reason=err or "Invalid image file")
 
     # Step 1: AI Vision Extraction (High Accuracy)
-    resolved_key = groq_api_key or os.getenv("GROQ_API_KEY", "").strip() or None
-    if resolved_key:
+    resolved_keys = resolve_api_keys(groq_api_key)
+    if resolved_keys:
         try:
             model = groq_model or os.getenv("GROQ_VISION_MODEL", "qwen/qwen3.8-27b").strip()
-            ai_res = extract_via_vision_ai(path, api_key=resolved_key, model=model)
+            ai_res = extract_via_vision_ai(path, api_key=",".join(resolved_keys), model=model)
             if ai_res and ai_res.success and len(ai_res.candidates) > 0:
                 LOGGER.info("Successfully extracted %d players via AI Vision", len(ai_res.candidates))
                 return ai_res

@@ -37,6 +37,32 @@ GAZETTE_CACHE: Dict[str, GazetteEdition] = {}
 LAST_PUBLISHED_WEEK_KEY: Optional[str] = None
 
 
+def resolve_api_keys(api_key: Optional[str] = None) -> List[str]:
+    """Resolves primary and fallback API keys from arguments and environment."""
+    keys: List[str] = []
+    if api_key:
+        for k in api_key.split(","):
+            c = k.strip()
+            if c and c not in keys:
+                keys.append(c)
+    env_primary = os.getenv("GROQ_API_KEY", "").strip()
+    if env_primary:
+        for k in env_primary.split(","):
+            c = k.strip()
+            if c and c not in keys:
+                keys.append(c)
+    env_sec = (
+        os.getenv("GROQ_API_KEY_SECONDARY", "").strip()
+        or os.getenv("GROQ_API_KEY_BACKUP", "").strip()
+    )
+    if env_sec:
+        for k in env_sec.split(","):
+            c = k.strip()
+            if c and c not in keys:
+                keys.append(c)
+    return keys
+
+
 @dataclass
 class GazetteEdition:
     """Structured weekly sports newspaper issue."""
@@ -183,8 +209,8 @@ async def generate_gazette_edition(
     summary = _summarize_match_week(week_matches)
     issue_num = len(matches) // 5 + 1
 
-    resolved_key = api_key or os.getenv("GROQ_API_KEY", "").strip() or None
-    if not resolved_key or not week_matches:
+    resolved_keys = resolve_api_keys(api_key)
+    if not resolved_keys or not week_matches:
         edition = _rule_based_fallback_edition(resolved_week, summary, issue_num)
         GAZETTE_CACHE[resolved_week] = edition
         return edition
@@ -211,41 +237,49 @@ async def generate_gazette_edition(
 
     try:
         content_str: Optional[str] = None
-        if Groq is not None:
-            try:
-                client = Groq(api_key=resolved_key, timeout=timeout_seconds)
-                response = client.chat.completions.create(
-                    model=model,
-                    messages=[{"role": "user", "content": prompt}],
-                    response_format={"type": "json_object"},
-                    max_tokens=350,
-                    temperature=0.75,
-                )
-                content_str = response.choices[0].message.content
-            except Exception as exc:
-                LOGGER.warning("Gazette Groq SDK call failed: %s; trying HTTP fallback", exc)
+        for attempt_idx, key in enumerate(resolved_keys):
+            if Groq is not None:
+                try:
+                    client = Groq(api_key=key, timeout=timeout_seconds)
+                    response = client.chat.completions.create(
+                        model=model,
+                        messages=[{"role": "user", "content": prompt}],
+                        response_format={"type": "json_object"},
+                        max_tokens=350,
+                        temperature=0.75,
+                    )
+                    content_str = response.choices[0].message.content
+                    if content_str:
+                        break
+                except Exception as exc:
+                    LOGGER.warning("Gazette key #%d failed via SDK: %s; trying HTTP/failover", attempt_idx + 1, exc)
 
-        if not content_str:
-            import httpx
+            if not content_str:
+                try:
+                    import httpx
 
-            headers = {
-                "Authorization": f"Bearer {resolved_key}",
-                "Content-Type": "application/json",
-            }
-            body = {
-                "model": model,
-                "messages": [{"role": "user", "content": prompt}],
-                "response_format": {"type": "json_object"},
-                "max_tokens": 350,
-                "temperature": 0.75,
-            }
-            with httpx.Client(timeout=timeout_seconds) as http_client:
-                r = http_client.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=body)
-                if r.status_code == 200:
-                    data = r.json()
-                    content_str = data["choices"][0]["message"]["content"]
-                else:
-                    LOGGER.warning("Gazette API HTTP %d: %s", r.status_code, r.text[:200])
+                    headers = {
+                        "Authorization": f"Bearer {key}",
+                        "Content-Type": "application/json",
+                    }
+                    body = {
+                        "model": model,
+                        "messages": [{"role": "user", "content": prompt}],
+                        "response_format": {"type": "json_object"},
+                        "max_tokens": 350,
+                        "temperature": 0.75,
+                    }
+                    with httpx.Client(timeout=timeout_seconds) as http_client:
+                        r = http_client.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=body)
+                        if r.status_code == 200:
+                            data = r.json()
+                            content_str = data["choices"][0]["message"]["content"]
+                            if content_str:
+                                break
+                        else:
+                            LOGGER.warning("Gazette API key #%d returned HTTP %d: %s", attempt_idx + 1, r.status_code, r.text[:200])
+                except Exception as exc:
+                    LOGGER.warning("Gazette key #%d failed via HTTP: %s", attempt_idx + 1, exc)
 
         if content_str:
             clean_json = content_str.strip()
