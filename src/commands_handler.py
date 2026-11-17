@@ -2056,11 +2056,11 @@ def register_commands(
         )
 
         lines = [
-            f"{idx}. {format_match_scoreline(m)}"
+            f"**{idx}.** {format_match_scoreline(m)}\n   🆔 `{m.match_id}`"
             for idx, m in enumerate(recent, start=1)
         ]
         embed.description = "\n\n".join(lines)
-        embed.set_footer(text=f"Showing {len(recent)} of {len(all_matches)} total matches.")
+        embed.set_footer(text=f"Showing {len(recent)} of {len(all_matches)} total matches • Copy Match ID for /pundit or /gazette")
         await interaction.response.send_message(embed=embed)
 
     # 5b. /latest-match

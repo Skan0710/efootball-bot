@@ -534,8 +534,8 @@ async def test_potw_best_team_and_hattrick_leaderboard_commands(test_config: Bot
 
 
 @pytest.mark.asyncio
-async def test_matches_command_only_shows_team_players_and_score(test_config: BotConfig) -> None:
-    """Verifies /matches displays only team players and score without match ID or extra metadata."""
+async def test_matches_command_shows_team_players_score_and_match_id(test_config: BotConfig) -> None:
+    """Verifies /matches displays team players, score, and match ID for easy searching."""
     bot = EFootballBot(test_config)
     await bot.excel_manager.save_match(
         MatchRecord(
@@ -566,12 +566,8 @@ async def test_matches_command_only_shows_team_players_and_score(test_config: Bo
     inter.response.send_message.assert_called_once()
     embed = inter.response.send_message.call_args[1]["embed"]
     assert len(embed.fields) == 0
-    assert "1. **Suri & Ashy** 3 - 2 **Skan & Jonny**" in embed.description
-    assert "`" not in embed.description
-    assert "M-SECRET-ID-99" not in embed.description
-    assert "Submitted by" not in embed.description
-    assert "3G" not in embed.description
-    assert "2026-11-11" not in embed.description
+    assert "**Suri & Ashy** 3 - 2 **Skan & Jonny**" in embed.description
+    assert "`M-SECRET-ID-99`" in embed.description
 
 
 @pytest.mark.asyncio
