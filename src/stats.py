@@ -681,11 +681,61 @@ def compute_player_card_ovr(
     return int(max(60, min(99, round(weighted_ovr))))
 
 
+def determine_team_leader(team_players: List[dict]) -> dict:
+    """Determines the team captain based on:
+    1. Highest standing on Team Leaders leaderboard (wins, win_rate, matches_led).
+    2. Tie-breaker: Higher OVR rating.
+    3. If OVR is also tied: Leader is chosen at random (not finalized on one).
+    """
+    if not team_players:
+        return {"leader": None, "is_tied": False, "tied_players": [], "leader_ovr": 0}
+
+    def leader_stats_key(p: dict) -> Tuple[int, float, int]:
+        return (int(p.get("leader_wins", 0)), float(p.get("leader_wr", 0.0)), int(p.get("leader_matches", 0)))
+
+    max_stats = max(leader_stats_key(p) for p in team_players)
+    candidates_by_stats = [p for p in team_players if leader_stats_key(p) == max_stats]
+
+    if len(candidates_by_stats) == 1:
+        chosen = candidates_by_stats[0]
+        return {
+            "leader": chosen["player"],
+            "is_tied": False,
+            "tied_players": [],
+            "leader_ovr": int(round(chosen["rating"])),
+        }
+
+    # Tie on leader stats -> Tie-breaker: Higher OVR
+    max_ovr = max(int(round(p["rating"])) for p in candidates_by_stats)
+    candidates_by_ovr = [p for p in candidates_by_stats if int(round(p["rating"])) == max_ovr]
+
+    if len(candidates_by_ovr) == 1:
+        chosen = candidates_by_ovr[0]
+        return {
+            "leader": chosen["player"],
+            "is_tied": False,
+            "tied_players": [],
+            "leader_ovr": max_ovr,
+        }
+
+    # Tie in OVR tie-breaker as well
+    return {
+        "leader": None,
+        "is_tied": True,
+        "tied_players": [p["player"] for p in candidates_by_ovr],
+        "leader_ovr": max_ovr,
+    }
+
+
 def generate_fair_teams(
     player_names: List[str],
     leaderboard_records: List[dict],
+    matches: Optional[List[MatchRecord]] = None,
+    leader_records: Optional[List[dict]] = None,
 ) -> dict:
-    """Splits 4, 5, or 6 players into the fairest possible Team A vs Team B matchup."""
+    """Splits 4, 5, or 6 players into the fairest possible Team A vs Team B matchup,
+    ensuring that the top 2 team leaders of the leaderboard stay on opposite teams.
+    """
     canonical_players: List[str] = []
     seen_keys: set[str] = set()
     for raw in player_names:
@@ -714,25 +764,62 @@ def generate_fair_teams(
 
     default_rating = round(sum(ranked_ratings) / len(ranked_ratings), 1) if ranked_ratings else 70.0
 
-    player_entries = [
-        {
+    # Resolve leader standings from leader_records or matches
+    leader_stats_by_player: Dict[str, dict] = {}
+    if leader_records is None and matches is not None:
+        leader_records = calculate_team_leader_aggregates(matches)
+
+    if leader_records:
+        for lr in leader_records:
+            k = canonicalize_player_name(str(lr.get("player", ""))).lower()
+            if k:
+                leader_stats_by_player[k] = lr
+
+    player_entries = []
+    for name in canonical_players:
+        p_key = name.lower()
+        ldr = leader_stats_by_player.get(p_key, {})
+        r_val = ratings_by_key.get(p_key, 0.0) or default_rating
+        player_entries.append({
             "player": name,
-            "rating": ratings_by_key.get(name.lower(), 0.0) or default_rating,
-            "is_unranked": ratings_by_key.get(name.lower(), 0.0) == 0.0,
-        }
-        for name in canonical_players
-    ]
+            "rating": r_val,
+            "is_unranked": ratings_by_key.get(p_key, 0.0) == 0.0,
+            "leader_wins": int(ldr.get("wins", 0)),
+            "leader_wr": float(ldr.get("win_rate", 0.0)),
+            "leader_matches": int(ldr.get("matches_led", 0)),
+        })
+
+    # Rank players to identify the top 2 best leaders in the pool:
+    # 1. Leaderboard standing (wins desc, win_rate desc, matches_led desc)
+    # 2. Tie-breaker: higher OVR rating
+    sorted_leaders = sorted(
+        player_entries,
+        key=lambda x: (
+            x["leader_wins"],
+            x["leader_wr"],
+            x["leader_matches"],
+            x["rating"],
+        ),
+        reverse=True,
+    )
+    top_leader_1 = sorted_leaders[0]
+    top_leader_2 = sorted_leaders[1]
+
+    idx_1 = player_entries.index(top_leader_1)
+    idx_2 = player_entries.index(top_leader_2)
 
     team_a_size = 2 if count == 4 else 3
     best_split = None
     best_key = None
+    fallback_split = None
+    fallback_key = None
 
     indices = list(range(count))
     for combo in combinations(indices, team_a_size):
-        # Avoid symmetric mirror partitions when teams are equal size
-        if count in (4, 6) and 0 not in combo:
-            continue
         combo_set = set(combo)
+        in_a_1 = idx_1 in combo_set
+        in_a_2 = idx_2 in combo_set
+
         team_a = [player_entries[i] for i in combo]
         team_b = [player_entries[i] for i in indices if i not in combo_set]
         sum_a = round(sum(p["rating"] for p in team_a), 2)
@@ -740,18 +827,49 @@ def generate_fair_teams(
         diff = round(abs(sum_a - sum_b), 2)
         avg_diff = round(abs((sum_a / len(team_a)) - (sum_b / len(team_b))), 2)
         score_key = (diff, avg_diff)
+
+        # Record fallback without leader restriction
+        if fallback_key is None or score_key < fallback_key:
+            fallback_key = score_key
+            fallback_split = (team_a, team_b, sum_a, sum_b, diff)
+
+        # Enforce requirement: Top 2 leaders must stay on OPPOSITE teams
+        if in_a_1 == in_a_2:
+            continue
+
+        # For equal size teams (4 or 6), break symmetry by fixing leader 1 in Team A
+        if count in (4, 6) and not in_a_1:
+            continue
+
         if best_key is None or score_key < best_key:
             best_key = score_key
-            best_split = {
-                "team_a": sorted(team_a, key=lambda x: x["rating"], reverse=True),
-                "team_b": sorted(team_b, key=lambda x: x["rating"], reverse=True),
-                "team_a_rating": sum_a,
-                "team_b_rating": sum_b,
-                "rating_diff": diff,
-            }
+            best_split = (team_a, team_b, sum_a, sum_b, diff)
 
-    assert best_split is not None
-    return best_split
+    chosen = best_split or fallback_split
+    assert chosen is not None
+    team_a_chosen, team_b_chosen, sum_a, sum_b, diff = chosen
+
+    ldr_a = determine_team_leader(team_a_chosen)
+    ldr_b = determine_team_leader(team_b_chosen)
+
+    def _order_team(players: List[dict], leader_info: dict) -> List[dict]:
+        leader_name = leader_info.get("leader")
+        if leader_name and not leader_info.get("is_tied"):
+            leader_p = [p for p in players if p["player"].lower() == leader_name.lower()]
+            other_p = [p for p in players if p["player"].lower() != leader_name.lower()]
+            other_p.sort(key=lambda x: x["rating"], reverse=True)
+            return leader_p + other_p
+        return sorted(players, key=lambda x: x["rating"], reverse=True)
+
+    return {
+        "team_a": _order_team(team_a_chosen, ldr_a),
+        "team_b": _order_team(team_b_chosen, ldr_b),
+        "team_a_rating": sum_a,
+        "team_b_rating": sum_b,
+        "rating_diff": diff,
+        "team_a_leader": ldr_a,
+        "team_b_leader": ldr_b,
+    }
 
 
 def calculate_player_form(

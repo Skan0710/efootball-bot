@@ -1042,6 +1042,68 @@ def test_calculate_captain_head_to_head() -> None:
         pass
 
 
+def test_determine_team_leader() -> None:
+    """Verifies team leader determination hierarchy:
+    1. Leaderboard wins/WR/matches.
+    2. Higher OVR tie-breaker.
+    3. Random tie-breaker if both leaderboard and OVR are tied.
+    """
+    from stats import determine_team_leader
+
+    # Case 1: Clear winner on leader stats
+    p1 = {"player": "Skan", "rating": 81.0, "leader_wins": 5, "leader_wr": 83.3, "leader_matches": 6}
+    p2 = {"player": "Jonny", "rating": 85.0, "leader_wins": 1, "leader_wr": 50.0, "leader_matches": 2}
+    res1 = determine_team_leader([p1, p2])
+    assert res1["leader"] == "Skan"
+    assert not res1["is_tied"]
+
+    # Case 2: Tie on leader stats (both 0 wins) -> Higher OVR gets leader
+    p3 = {"player": "Ashy", "rating": 82.0, "leader_wins": 0, "leader_wr": 0.0, "leader_matches": 0}
+    p4 = {"player": "Maple", "rating": 70.0, "leader_wins": 0, "leader_wr": 0.0, "leader_matches": 0}
+    res2 = determine_team_leader([p3, p4])
+    assert res2["leader"] == "Ashy"
+    assert not res2["is_tied"]
+
+    # Case 3: Tie on leader stats AND tie on OVR -> Leader is at random
+    p5 = {"player": "PlayerA", "rating": 75.0, "leader_wins": 0, "leader_wr": 0.0, "leader_matches": 0}
+    p6 = {"player": "PlayerB", "rating": 75.0, "leader_wins": 0, "leader_wr": 0.0, "leader_matches": 0}
+    res3 = determine_team_leader([p5, p6])
+    assert res3["leader"] is None
+    assert res3["is_tied"]
+    assert "PlayerA" in res3["tied_players"] and "PlayerB" in res3["tied_players"]
+
+
+def test_fair_teams_captain_balancing() -> None:
+    """Verifies that top 2 leaders from the pool stay on opposite teams."""
+    from stats import generate_fair_teams
+
+    records = [
+        {"player": "Skan", "matches_played": 10, "win_rate": 80.0, "gapg": 2.5, "gpg": 2.0},   # ~87 OVR
+        {"player": "Suri", "matches_played": 10, "win_rate": 80.0, "gapg": 2.5, "gpg": 2.0},   # ~87 OVR
+        {"player": "Jonny", "matches_played": 10, "win_rate": 50.0, "gapg": 1.5, "gpg": 1.0},  # ~78 OVR
+        {"player": "Ashy", "matches_played": 10, "win_rate": 50.0, "gapg": 1.5, "gpg": 1.0},   # ~78 OVR
+    ]
+    # Skan and Suri are top leaders
+    leader_records = [
+        {"player": "Skan", "wins": 8, "matches_led": 9, "win_rate": 88.9},
+        {"player": "Suri", "wins": 5, "matches_led": 6, "win_rate": 83.3},
+        {"player": "Jonny", "wins": 0, "matches_led": 0, "win_rate": 0.0},
+        {"player": "Ashy", "wins": 0, "matches_led": 0, "win_rate": 0.0},
+    ]
+
+    split = generate_fair_teams(["Skan", "Suri", "Jonny", "Ashy"], records, leader_records=leader_records)
+    team_a_names = [p["player"] for p in split["team_a"]]
+    team_b_names = [p["player"] for p in split["team_b"]]
+
+    # Skan and Suri MUST NOT be on the same team
+    assert ("Skan" in team_a_names and "Suri" in team_b_names) or ("Suri" in team_a_names and "Skan" in team_b_names)
+
+    # Leader is placed at index 0
+    assert split["team_a"][0]["player"] in ("Skan", "Suri")
+    assert split["team_b"][0]["player"] in ("Skan", "Suri")
+
+
+
 
 
 

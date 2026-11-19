@@ -619,6 +619,8 @@ async def test_fair_teams_command_and_modal(test_config: BotConfig) -> None:
     embed = inter_sub.response.send_message.call_args[1]["embed"]
     assert "Fair Teams (2v2" in embed.title
     assert len(embed.fields) == 2
+    assert "(leader)" in embed.fields[0].value or "Leader:" in embed.fields[0].value
+    assert "(leader)" in embed.fields[1].value or "Leader:" in embed.fields[1].value
 
     # 2. Inline 5 players -> directly responds with 3v2 balanced embed
     inter_inline = MagicMock(spec=discord.Interaction)

@@ -1142,7 +1142,7 @@ def parse_fair_team_names(raw_names: str) -> List[str]:
 
 
 def build_fair_teams_embed(split: dict, player_count: int) -> discord.Embed:
-    """Builds the Discord embed displaying balanced co-op teams."""
+    """Builds the Discord embed displaying balanced co-op teams with designated captains."""
     mode_label = {4: "2v2", 5: "3v2", 6: "3v3"}.get(player_count, f"{len(split['team_a'])}v{len(split['team_b'])}")
     embed = discord.Embed(
         title=f"⚖️ Fair Teams ({mode_label} — {player_count} Players)",
@@ -1151,24 +1151,43 @@ def build_fair_teams_embed(split: dict, player_count: int) -> discord.Embed:
         timestamp=datetime.now(),
     )
 
-    def _fmt_side(players: List[dict]) -> str:
+    def _fmt_side(players: List[dict], leader_info: Optional[dict] = None) -> str:
         lines = []
+        leader_info = leader_info or {}
+        is_tied = leader_info.get("is_tied", False)
+        tied_players = [p.lower() for p in leader_info.get("tied_players", [])]
+        leader_name = leader_info.get("leader")
+
         for p in players:
+            name = p["player"]
+            ovr = int(round(p["rating"]))
             tag = " (Unranked)" if p.get("is_unranked") else ""
-            lines.append(f"• **{p['player']}** — {int(round(p['rating']))} OVR{tag}")
+
+            if not is_tied and leader_name and name.lower() == leader_name.lower():
+                lines.append(f"• **{name} (leader)** — {ovr} OVR{tag}")
+            elif is_tied and name.lower() in tied_players:
+                lines.append(f"• **{name}** — {ovr} OVR{tag} *(Leader: At Random)*")
+            else:
+                lines.append(f"• **{name}** — {ovr} OVR{tag}")
+
+        if not is_tied and leader_name:
+            lines.append(f"\n👑 **Leader:** **{leader_name}**")
+        elif is_tied:
+            lines.append("\n🎲 **Leader:** **At random** *(Tied in leaderboard & OVR)*")
+
         return "\n\n".join(lines)
 
     embed.add_field(
         name=f"🔵 Team A (Avg OVR: {round(split['team_a_rating'] / len(split['team_a']), 1)})",
-        value=_fmt_side(split["team_a"]),
+        value=_fmt_side(split["team_a"], split.get("team_a_leader")),
         inline=True,
     )
     embed.add_field(
         name=f"🔴 Team B (Avg OVR: {round(split['team_b_rating'] / len(split['team_b']), 1)})",
-        value=_fmt_side(split["team_b"]),
+        value=_fmt_side(split["team_b"], split.get("team_b_leader")),
         inline=True,
     )
-    embed.set_footer(text="OVR = Confidence-Weighted FC 27 Card Rating (60–99) • Balanced from Excel history")
+    embed.set_footer(text="Balanced by Card OVR & Captain Leaderboard • Opposing Leaders Split")
     return embed
 
 
@@ -1200,8 +1219,9 @@ class FairTeamsModal(discord.ui.Modal):
             return
 
         records = await self.excel_manager.get_leaderboard_from_sheet()
+        all_matches = await self.excel_manager.get_all_matches()
         try:
-            split = generate_fair_teams(raw_names, records)
+            split = generate_fair_teams(raw_names, records, matches=all_matches)
         except ValueError as exc:
             await interaction.response.send_message(f"❌ {exc}", ephemeral=True)
             return
@@ -2633,8 +2653,9 @@ def register_commands(
             return
 
         records = await excel_manager.get_leaderboard_from_sheet()
+        all_matches = await excel_manager.get_all_matches()
         try:
-            split = generate_fair_teams(raw_names, records)
+            split = generate_fair_teams(raw_names, records, matches=all_matches)
         except ValueError as exc:
             await interaction.response.send_message(f"❌ {exc}", ephemeral=True)
             return
