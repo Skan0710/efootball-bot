@@ -979,6 +979,69 @@ def test_calculate_team_leader_aggregates() -> None:
     assert leaders[0]["player"] == "Skan"
 
 
+def test_calculate_captain_head_to_head() -> None:
+    """Verifies H2H calculations specifically for opposing team captains."""
+    from stats import calculate_captain_head_to_head
+
+    m1 = MatchRecord(
+        match_id="M-CH2H-01",
+        date="2026-11-19 10:00:00",
+        result=MatchResult.HOME_WIN,
+        submitted_by="Admin",
+        notes="Score: Skan & Jonny 3 - 1 Suri & Shallowe (Home Win)",
+        player_stats=[
+            PlayerStat(player="Skan", goals=2, assists=1, result=MatchResult.WIN),
+            PlayerStat(player="Jonny", goals=1, assists=1, result=MatchResult.WIN),
+            PlayerStat(player="Suri", goals=1, assists=0, result=MatchResult.LOSS),
+            PlayerStat(player="Shallowe", goals=0, assists=1, result=MatchResult.LOSS),
+        ],
+    )
+    m2 = MatchRecord(
+        match_id="M-CH2H-02",
+        date="2026-11-19 11:00:00",
+        result=MatchResult.HOME_WIN,
+        submitted_by="Admin",
+        notes="Score: Suri & Azlan 4 - 2 Skan & Annie (Home Win)",
+        player_stats=[
+            PlayerStat(player="Suri", goals=3, assists=1, result=MatchResult.WIN),
+            PlayerStat(player="Azlan", goals=1, assists=1, result=MatchResult.WIN),
+            PlayerStat(player="Skan", goals=1, assists=0, result=MatchResult.LOSS),
+            PlayerStat(player="Annie", goals=1, assists=1, result=MatchResult.LOSS),
+        ],
+    )
+    m3 = MatchRecord(
+        match_id="M-CH2H-03",
+        date="2026-11-19 12:00:00",
+        result=MatchResult.DRAW,
+        submitted_by="Admin",
+        notes="Score: Skan & Lilly 2 - 2 Suri & Naka (Draw)",
+        player_stats=[
+            PlayerStat(player="Skan", goals=1, assists=0, result=MatchResult.DRAW),
+            PlayerStat(player="Lilly", goals=1, assists=1, result=MatchResult.DRAW),
+            PlayerStat(player="Suri", goals=1, assists=1, result=MatchResult.DRAW),
+            PlayerStat(player="Naka", goals=1, assists=0, result=MatchResult.DRAW),
+        ],
+    )
+
+    data = calculate_captain_head_to_head("Skan", "Suri", [m1, m2, m3])
+    assert data["matches"] == 3
+    assert data["c1_wins"] == 1  # Skan won M1
+    assert data["c2_wins"] == 1  # Suri won M2
+    assert data["draws"] == 1    # M3 draw
+    assert data["c1_goals"] == 3 + 2 + 2  # 7
+    assert data["c2_goals"] == 1 + 4 + 2  # 7
+    assert round(data["c1_win_rate"], 1) == 33.3
+    assert round(data["c2_win_rate"], 1) == 33.3
+    assert len(data["clashes"]) == 3
+
+    # Error handling
+    try:
+        calculate_captain_head_to_head("Skan", "skan", [m1])
+        assert False, "Should raise ValueError for identical captains"
+    except ValueError:
+        pass
+
+
 
 
 

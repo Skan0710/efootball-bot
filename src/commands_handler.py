@@ -46,6 +46,7 @@ from stats import (
     calculate_potw_rankings,
     calculate_session_recap,
     calculate_squad_lineup,
+    calculate_captain_head_to_head,
     calculate_team_leader_aggregates,
     compute_player_card_ovr,
     compute_player_rating,
@@ -2512,6 +2513,83 @@ def register_commands(
 
         embed.set_footer(text=f"Showing {len(leaders)} leaders • Leader = 1st player in team lineup")
         await interaction.followup.send(embed=embed)
+
+    # 8c. /captain-h2h
+    @tree.command(
+        name="captain-h2h",
+        description="View head-to-head managerial rivalry stats between two team captains.",
+    )
+    @app_commands.describe(
+        captain1="Select first team captain",
+        captain2="Select second team captain",
+    )
+    @app_commands.autocomplete(captain1=player_autocomplete, captain2=player_autocomplete)
+    async def captain_h2h(interaction: discord.Interaction, captain1: str, captain2: str) -> None:
+        err = check_guild_and_channel(interaction, config)
+        if err:
+            await interaction.response.send_message(f"❌ {err}", ephemeral=True)
+            return
+
+        all_matches = await excel_manager.get_all_matches()
+        try:
+            data = calculate_captain_head_to_head(captain1, captain2, all_matches)
+        except ValueError as exc:
+            await interaction.response.send_message(f"❌ {exc}", ephemeral=True)
+            return
+
+        c1 = data["captain1"]
+        c2 = data["captain2"]
+
+        if data["matches"] == 0:
+            await interaction.response.send_message(
+                f"📋 **{c1}** and **{c2}** have not faced each other as opposing team captains yet.",
+            )
+            return
+
+        embed = discord.Embed(
+            title=f"👑 Captain Head-to-Head — {c1} vs {c2}",
+            color=discord.Color.gold(),
+            timestamp=datetime.now(),
+        )
+
+        match_word = "match" if data["matches"] == 1 else "matches"
+        embed.description = (
+            f"⚔️ **Matches as Opposing Captains:** {data['matches']} {match_word}\n\n"
+            f"🏆 **Record:** **{c1}** {data['c1_wins']}W — {data['draws']}D — {data['c2_wins']}W **{c2}**\n\n"
+            f"⚽ **Team Goals:** {c1} ({data['c1_goals']}) — ({data['c2_goals']}) {c2}"
+        )
+
+        embed.add_field(
+            name=f"⭐ Captain {c1}",
+            value=(
+                f"👑 **{data['c1_wins']} Wins** ({data['c1_win_rate']:.1f}% WR)\n"
+                f"⚽ **{data['c1_goals']} Goals Scored** by led teams"
+            ),
+            inline=True,
+        )
+        embed.add_field(
+            name=f"⭐ Captain {c2}",
+            value=(
+                f"👑 **{data['c2_wins']} Wins** ({data['c2_win_rate']:.1f}% WR)\n"
+                f"⚽ **{data['c2_goals']} Goals Scored** by led teams"
+            ),
+            inline=True,
+        )
+
+        if data["clashes"]:
+            recent_lines = []
+            for item in reversed(data["clashes"][-5:]):
+                score_str = format_match_scoreline(item["match"])
+                winner_str = f"👑 {item['winner']} Win" if item['winner'] != "Draw" else "⚪ Draw"
+                recent_lines.append(f"• `{item['match_id']}`: {score_str} ({winner_str})")
+            embed.add_field(
+                name="📜 Recent Clashes (Latest first)",
+                value="\n".join(recent_lines),
+                inline=False,
+            )
+
+        embed.set_footer(text=f"Total Captain Duels: {data['matches']} • Leader = 1st player in team lineup")
+        await interaction.response.send_message(embed=embed)
 
     # 10. /fair-teams
     @tree.command(

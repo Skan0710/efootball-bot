@@ -55,6 +55,7 @@ def test_command_registration_names(test_config: BotConfig, tmp_path: Path) -> N
         "potm",
         "best-team",
         "best-team-leader",
+        "captain-h2h",
         "fair-teams",
         "form",
         "h2h",
@@ -1367,6 +1368,60 @@ async def test_best_team_leader_command(test_config: BotConfig, tmp_path: Path) 
     assert "Skan" in embed_data.description
     assert "1 Win" in embed_data.description
     assert "Lilly" in embed_data.description
+
+
+@pytest.mark.asyncio
+async def test_captain_h2h_command(test_config: BotConfig) -> None:
+    """Tests /captain-h2h command callback for empty state and matches between captains."""
+    bot = EFootballBot(test_config)
+    em = bot.excel_manager
+
+    cmd = bot.tree.get_command("captain-h2h")
+    assert cmd is not None
+
+    # 1. No matches yet
+    inter_empty = MagicMock(spec=discord.Interaction)
+    inter_empty.guild_id = test_config.guild_id
+    inter_empty.channel_id = test_config.allowed_channel_id
+    inter_empty.response = MagicMock()
+    inter_empty.response.send_message = AsyncMock()
+
+    await cmd.callback(inter_empty, captain1="Skan", captain2="Suri")
+    inter_empty.response.send_message.assert_called_once()
+    msg = inter_empty.response.send_message.call_args[0][0]
+    assert "have not faced each other as opposing team captains yet" in msg
+
+    # 2. Add match where Skan captains Home and Suri captains Away
+    await em.save_match(
+        MatchRecord(
+            match_id="M-CH2H-TEST",
+            date="2026-11-19 14:00:00",
+            result=MatchResult.HOME_WIN,
+            submitted_by="Admin",
+            notes="Score: Skan & Jonny 4 - 2 Suri & Annie (Home Win)",
+            player_stats=[
+                PlayerStat(player="Skan", goals=3, assists=1, result=MatchResult.HOME_WIN),
+                PlayerStat(player="Jonny", goals=1, assists=1, result=MatchResult.HOME_WIN),
+                PlayerStat(player="Suri", goals=2, assists=0, result=MatchResult.AWAY_WIN),
+                PlayerStat(player="Annie", goals=0, assists=1, result=MatchResult.AWAY_WIN),
+            ],
+        )
+    )
+
+    inter_clash = MagicMock(spec=discord.Interaction)
+    inter_clash.guild_id = test_config.guild_id
+    inter_clash.channel_id = test_config.allowed_channel_id
+    inter_clash.response = MagicMock()
+    inter_clash.response.send_message = AsyncMock()
+
+    await cmd.callback(inter_clash, captain1="Skan", captain2="Suri")
+    inter_clash.response.send_message.assert_called_once()
+    embed = inter_clash.response.send_message.call_args[1]["embed"]
+    assert "Captain Head-to-Head" in embed.title
+    assert "Skan" in embed.title and "Suri" in embed.title
+    assert "1 match" in embed.description
+    assert "M-CH2H-TEST" in embed.fields[2].value
+
 
 
 

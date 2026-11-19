@@ -534,6 +534,111 @@ def calculate_team_leader_aggregates(matches: List[MatchRecord]) -> List[dict]:
     return results
 
 
+def calculate_captain_head_to_head(
+    captain1: str,
+    captain2: str,
+    matches: List[MatchRecord],
+) -> dict:
+    """Computes head-to-head stats specifically when two players captained opposing teams."""
+    c1 = canonicalize_player_name(captain1)
+    c2 = canonicalize_player_name(captain2)
+    k1 = c1.strip().lower()
+    k2 = c2.strip().lower()
+    if not k1 or not k2:
+        raise ValueError("Both captain names must be non-empty.")
+    if k1 == k2:
+        raise ValueError(f"Please select two different captains (both resolved to '{c1}').")
+
+    matches_against = 0
+    c1_wins = 0
+    c2_wins = 0
+    draws = 0
+    c1_goals = 0
+    c2_goals = 0
+    clashes: List[dict] = []
+
+    for match in matches:
+        home_leader, away_leader = extract_match_team_leaders(match)
+        if not home_leader or not away_leader:
+            continue
+
+        hl_key = home_leader.strip().lower()
+        al_key = away_leader.strip().lower()
+
+        # Check if this match was captain1 vs captain2
+        if {hl_key, al_key} != {k1, k2}:
+            continue
+
+        matches_against += 1
+        scores = extract_match_scores(match)
+        home_score = scores[0] if scores else None
+        away_score = scores[1] if scores else None
+
+        is_home_win = match.result in (MatchResult.HOME_WIN, MatchResult.WIN)
+        is_away_win = match.result in (MatchResult.AWAY_WIN, MatchResult.LOSS)
+        is_draw = match.result == MatchResult.DRAW
+
+        if hl_key == k1:
+            # c1 is home leader, c2 is away leader
+            if is_home_win:
+                c1_wins += 1
+                winner = c1
+            elif is_away_win:
+                c2_wins += 1
+                winner = c2
+            else:
+                draws += 1
+                winner = "Draw"
+
+            if home_score is not None and away_score is not None:
+                c1_goals += home_score
+                c2_goals += away_score
+        else:
+            # c2 is home leader, c1 is away leader
+            if is_home_win:
+                c2_wins += 1
+                winner = c2
+            elif is_away_win:
+                c1_wins += 1
+                winner = c1
+            else:
+                draws += 1
+                winner = "Draw"
+
+            if home_score is not None and away_score is not None:
+                c2_goals += home_score
+                c1_goals += away_score
+
+        clashes.append({
+            "match_id": match.match_id,
+            "date": match.date,
+            "home_leader": home_leader,
+            "away_leader": away_leader,
+            "home_score": home_score,
+            "away_score": away_score,
+            "result": match.result,
+            "winner": winner,
+            "match": match,
+        })
+
+    c1_wr = round((c1_wins / matches_against) * 100, 1) if matches_against > 0 else 0.0
+    c2_wr = round((c2_wins / matches_against) * 100, 1) if matches_against > 0 else 0.0
+
+    return {
+        "captain1": c1,
+        "captain2": c2,
+        "matches": matches_against,
+        "c1_wins": c1_wins,
+        "c2_wins": c2_wins,
+        "draws": draws,
+        "c1_goals": c1_goals,
+        "c2_goals": c2_goals,
+        "c1_win_rate": c1_wr,
+        "c2_win_rate": c2_wr,
+        "clashes": clashes,
+    }
+
+
 def compute_player_rating(record: dict | PlayerAggregateRecord) -> float:
     """Computes a balanced historical skill rating from Win%, GAPG, and GPG."""
     if isinstance(record, dict):
