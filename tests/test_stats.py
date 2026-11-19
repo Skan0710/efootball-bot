@@ -1103,6 +1103,70 @@ def test_fair_teams_captain_balancing() -> None:
     assert split["team_b"][0]["player"] in ("Skan", "Suri")
 
 
+def test_filter_matches_from_leader_start() -> None:
+    """Verifies that matches preceding the leader start match ID are excluded from leader tracking."""
+    from stats import (
+        DEFAULT_LEADER_START_MATCH_ID,
+        calculate_team_leader_aggregates,
+        filter_matches_from_leader_start,
+    )
+
+    m_old = MatchRecord(
+        match_id="M-OLD-01",
+        date="2026-11-18 10:00:00",
+        result=MatchResult.HOME_WIN,
+        submitted_by="Admin",
+        notes="Score: Skan & Jonny 3 - 1 Suri & Ashy (Home Win)",
+        player_stats=[
+            PlayerStat(player="Skan", goals=2, assists=1, result=MatchResult.WIN),
+            PlayerStat(player="Jonny", goals=1, assists=1, result=MatchResult.WIN),
+            PlayerStat(player="Suri", goals=1, assists=0, result=MatchResult.LOSS),
+            PlayerStat(player="Ashy", goals=0, assists=1, result=MatchResult.LOSS),
+        ],
+    )
+    m_cutoff = MatchRecord(
+        match_id="M-20261119-8723FE",
+        date="2026-11-19 23:59:40",
+        result=MatchResult.HOME_WIN,
+        submitted_by="Admin",
+        notes="Score: Home 3 - 2 Away (Home Win)",
+        player_stats=[
+            PlayerStat(player="Jonny", goals=1, assists=2, result=MatchResult.WIN),
+            PlayerStat(player="Annie", goals=2, assists=0, result=MatchResult.WIN),
+            PlayerStat(player="Azlan", goals=2, assists=0, result=MatchResult.LOSS),
+            PlayerStat(player="Suri", goals=0, assists=0, result=MatchResult.LOSS),
+        ],
+    )
+    m_new = MatchRecord(
+        match_id="M-NEW-01",
+        date="2026-11-20 01:00:00",
+        result=MatchResult.HOME_WIN,
+        submitted_by="Admin",
+        notes="Score: Jonny & Annie 4 - 1 Azlan & Suri (Home Win)",
+        player_stats=[
+            PlayerStat(player="Jonny", goals=2, assists=2, result=MatchResult.WIN),
+            PlayerStat(player="Annie", goals=2, assists=1, result=MatchResult.WIN),
+            PlayerStat(player="Azlan", goals=1, assists=0, result=MatchResult.LOSS),
+            PlayerStat(player="Suri", goals=0, assists=1, result=MatchResult.LOSS),
+        ],
+    )
+
+    all_matches = [m_old, m_cutoff, m_new]
+    filtered = filter_matches_from_leader_start(all_matches, start_match_id="M-20261119-8723FE")
+    assert len(filtered) == 2
+    assert filtered[0].match_id == "M-20261119-8723FE"
+    assert filtered[1].match_id == "M-NEW-01"
+
+    # calculate_team_leader_aggregates only counts from cutoff onwards: Skan's old win is excluded!
+    leaders = calculate_team_leader_aggregates(all_matches, start_match_id="M-20261119-8723FE")
+    leader_names = [l["player"] for l in leaders]
+    assert "Skan" not in leader_names
+    assert "Jonny" in leader_names
+    jonny_rec = next(l for l in leaders if l["player"] == "Jonny")
+    assert jonny_rec["wins"] == 1
+    assert jonny_rec["matches_led"] == 1
+
+
 
 
 

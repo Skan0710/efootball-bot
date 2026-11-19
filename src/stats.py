@@ -470,12 +470,38 @@ def extract_match_team_leaders(match: MatchRecord) -> Tuple[Optional[str], Optio
     return home_leader, away_leader
 
 
-def calculate_team_leader_aggregates(matches: List[MatchRecord]) -> List[dict]:
-    """Calculates team leader stats across all matches.
+LEADER_START_MATCH_ID: Optional[str] = "M-20261119-8723FE"
+DEFAULT_LEADER_START_MATCH_ID = LEADER_START_MATCH_ID
+
+
+def filter_matches_from_leader_start(
+    matches: List[MatchRecord],
+    start_match_id: Optional[str] = LEADER_START_MATCH_ID,
+) -> List[MatchRecord]:
+    """Filters matches so that team leader statistics only count starting from the designated match onwards.
+
+    If start_match_id is present in matches, all preceding matches are excluded.
+    If start_match_id is not in matches (e.g. in isolated unit tests), returns matches as-is.
+    """
+    if not start_match_id or not matches:
+        return matches
+    clean_target = start_match_id.strip().upper()
+    idx = next((i for i, m in enumerate(matches) if m.match_id.strip().upper() == clean_target), None)
+    if idx is not None:
+        return matches[idx:]
+    return matches
+
+
+def calculate_team_leader_aggregates(
+    matches: List[MatchRecord],
+    start_match_id: Optional[str] = LEADER_START_MATCH_ID,
+) -> List[dict]:
+    """Calculates team leader stats starting from LEADER_START_MATCH_ID onwards.
 
     Ranked primarily by Wins as Leader (descending), then Win Rate (descending),
     then Matches Led (descending).
     """
+    matches = filter_matches_from_leader_start(matches, start_match_id=start_match_id)
     leader_records: Dict[str, dict] = {}
 
     for match in matches:
@@ -538,8 +564,10 @@ def calculate_captain_head_to_head(
     captain1: str,
     captain2: str,
     matches: List[MatchRecord],
+    start_match_id: Optional[str] = LEADER_START_MATCH_ID,
 ) -> dict:
     """Computes head-to-head stats specifically when two players captained opposing teams."""
+    matches = filter_matches_from_leader_start(matches, start_match_id=start_match_id)
     c1 = canonicalize_player_name(captain1)
     c2 = canonicalize_player_name(captain2)
     k1 = c1.strip().lower()
