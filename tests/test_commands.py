@@ -54,6 +54,7 @@ def test_command_registration_names(test_config: BotConfig, tmp_path: Path) -> N
         "potw",
         "potm",
         "best-team",
+        "best-team-leader",
         "fair-teams",
         "form",
         "h2h",
@@ -1309,6 +1310,63 @@ async def test_say_command_admin_and_modal_flow(test_config: BotConfig) -> None:
     mock_channel.send.assert_called_with("Quick direct announcement!")
     inter_inline.followup.send.assert_called_once()
     assert "Message sent as bot" in inter_inline.followup.send.call_args[0][0]
+
+
+@pytest.mark.asyncio
+async def test_best_team_leader_command(test_config: BotConfig, tmp_path: Path) -> None:
+    """Verifies /best-team-leader command displays ranked captain leaderboard."""
+    bot = EFootballBot(test_config)
+    em = bot.excel_manager
+
+    # 1. Empty state
+    inter_empty = MagicMock(spec=discord.Interaction)
+    inter_empty.guild_id = test_config.guild_id
+    inter_empty.channel_id = test_config.allowed_channel_id
+    inter_empty.response = MagicMock()
+    inter_empty.response.defer = AsyncMock()
+    inter_empty.followup = MagicMock()
+    inter_empty.followup.send = AsyncMock()
+
+    cmd = bot.tree.get_command("best-team-leader")
+    assert cmd is not None
+    await cmd.callback(inter_empty)
+
+    inter_empty.followup.send.assert_called_once()
+    embed_empty = inter_empty.followup.send.call_args[1]["embed"]
+    assert "No team leader data recorded yet" in embed_empty.description
+
+    # 2. Add match with team lineups: Home (Skan & Jonny) 3 - 1 Away (Lilly & Azlan) -> Skan wins, Lilly loses
+    await em.save_match(
+        MatchRecord(
+            match_id="M-LEADER-01",
+            date="2026-11-19 12:00:00",
+            result=MatchResult.HOME_WIN,
+            submitted_by="Admin",
+            notes="Score: Skan & Jonny 3 - 1 Lilly & Azlan (Home Win)",
+            player_stats=[
+                PlayerStat(player="Skan", goals=2, assists=1, result=MatchResult.HOME_WIN),
+                PlayerStat(player="Jonny", goals=1, assists=1, result=MatchResult.HOME_WIN),
+                PlayerStat(player="Lilly", goals=1, assists=0, result=MatchResult.AWAY_WIN),
+                PlayerStat(player="Azlan", goals=0, assists=1, result=MatchResult.AWAY_WIN),
+            ],
+        )
+    )
+
+    inter_data = MagicMock(spec=discord.Interaction)
+    inter_data.guild_id = test_config.guild_id
+    inter_data.channel_id = test_config.allowed_channel_id
+    inter_data.response = MagicMock()
+    inter_data.response.defer = AsyncMock()
+    inter_data.followup = MagicMock()
+    inter_data.followup.send = AsyncMock()
+
+    await cmd.callback(inter_data)
+    inter_data.followup.send.assert_called_once()
+    embed_data = inter_data.followup.send.call_args[1]["embed"]
+    assert "Captains & Team Leaders Leaderboard" in embed_data.title
+    assert "Skan" in embed_data.description
+    assert "1 Win" in embed_data.description
+    assert "Lilly" in embed_data.description
 
 
 

@@ -15,6 +15,7 @@ from models import (
     PlayerAggregateRecord,
     PlayerStat,
     canonicalize_player_name,
+    parse_players_from_team_param,
 )
 
 
@@ -430,6 +431,107 @@ def calculate_best_teams(matches: List[MatchRecord]) -> List[dict]:
         reverse=True,
     )
     return teams
+
+
+def extract_match_team_leaders(match: MatchRecord) -> Tuple[Optional[str], Optional[str]]:
+    """Extracts (home_leader, away_leader) from a match record.
+
+    The leader is the first player name of each team entered during a match.
+    Parses team names from match notes (e.g., 'Score: Skan & Jonny & Suri 4 - 2 Shallowe & Naka & Azlan').
+    """
+    if not match.notes:
+        return None, None
+
+    sm = re.match(
+        r"^\s*(?:Score:\s*)?(?P<left>.+?)\s+(?P<hs>\d+)\s*-\s*(?P<as>\d+)\s+(?P<right>.+?)(?:\s*\([^)]*\))?\s*$",
+        match.notes.strip(),
+        flags=re.IGNORECASE,
+    )
+    if not sm:
+        return None, None
+
+    left_str = sm.group("left").strip()
+    right_str = sm.group("right").strip()
+
+    home_players = parse_players_from_team_param(left_str)
+    away_players = parse_players_from_team_param(right_str)
+
+    home_leader = canonicalize_player_name(home_players[0]) if home_players else None
+    away_leader = canonicalize_player_name(away_players[0]) if away_players else None
+
+    # Validate against actual player names in the match if player_stats is present
+    if match.player_stats:
+        known_players = {canonicalize_player_name(p.player).lower() for p in match.player_stats}
+        if home_leader and home_leader.lower() not in known_players:
+            home_leader = None
+        if away_leader and away_leader.lower() not in known_players:
+            away_leader = None
+
+    return home_leader, away_leader
+
+
+def calculate_team_leader_aggregates(matches: List[MatchRecord]) -> List[dict]:
+    """Calculates team leader stats across all matches.
+
+    Ranked primarily by Wins as Leader (descending), then Win Rate (descending),
+    then Matches Led (descending).
+    """
+    leader_records: Dict[str, dict] = {}
+
+    for match in matches:
+        home_leader, away_leader = extract_match_team_leaders(match)
+
+        is_home_win = match.result in (MatchResult.HOME_WIN, MatchResult.WIN)
+        is_away_win = match.result in (MatchResult.AWAY_WIN, MatchResult.LOSS)
+        is_draw = match.result == MatchResult.DRAW
+
+        if home_leader:
+            rec = leader_records.setdefault(
+                home_leader,
+                {"player": home_leader, "matches_led": 0, "wins": 0, "losses": 0, "draws": 0}
+            )
+            rec["matches_led"] += 1
+            if is_home_win:
+                rec["wins"] += 1
+            elif is_away_win:
+                rec["losses"] += 1
+            elif is_draw:
+                rec["draws"] += 1
+
+        if away_leader:
+            rec = leader_records.setdefault(
+                away_leader,
+                {"player": away_leader, "matches_led": 0, "wins": 0, "losses": 0, "draws": 0}
+            )
+            rec["matches_led"] += 1
+            if is_away_win:
+                rec["wins"] += 1
+            elif is_home_win:
+                rec["losses"] += 1
+            elif is_draw:
+                rec["draws"] += 1
+
+    results: List[dict] = []
+    for player, rec in leader_records.items():
+        m_cnt = rec["matches_led"]
+        w = rec["wins"]
+        l = rec["losses"]
+        d = rec["draws"]
+        wr = round((w / m_cnt) * 100, 1) if m_cnt > 0 else 0.0
+        results.append({
+            "player": player,
+            "matches_led": m_cnt,
+            "wins": w,
+            "losses": l,
+            "draws": d,
+            "win_rate": wr,
+        })
+
+    results.sort(
+        key=lambda r: (r["wins"], r["win_rate"], r["matches_led"]),
+        reverse=True,
+    )
+    return results
 
 
 def compute_player_rating(record: dict | PlayerAggregateRecord) -> float:

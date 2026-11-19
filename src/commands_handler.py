@@ -46,6 +46,7 @@ from stats import (
     calculate_potw_rankings,
     calculate_session_recap,
     calculate_squad_lineup,
+    calculate_team_leader_aggregates,
     compute_player_card_ovr,
     compute_player_rating,
     extract_match_scores,
@@ -2446,6 +2447,70 @@ def register_commands(
             timestamp=datetime.now(),
         )
         embed.set_footer(text=f"Total teammate pairings: {len(teams)} • Sorted by wins together")
+        await interaction.followup.send(embed=embed)
+
+    # 8b. /best-team-leader
+    @tree.command(
+        name="best-team-leader",
+        description="View the Captains & Team Leaders leaderboard ranked by most wins as a leader.",
+    )
+    async def best_team_leader(interaction: discord.Interaction) -> None:
+        err = check_guild_and_channel(interaction, config)
+        if err:
+            await interaction.response.send_message(f"❌ {err}", ephemeral=True)
+            return
+
+        await interaction.response.defer()
+
+        all_matches = await excel_manager.get_all_matches()
+        leaders = calculate_team_leader_aggregates(all_matches)
+
+        embed = discord.Embed(
+            title="👑 Captains & Team Leaders Leaderboard",
+            description="Rankings based on wins when leading a team (first name in lineup).\n",
+            color=discord.Color.gold(),
+            timestamp=datetime.now(),
+        )
+
+        winning_leaders = [l for l in leaders if l["wins"] > 0]
+
+        if not leaders:
+            embed.description += (
+                "\n📋 *No team leader data recorded yet.*\n\n"
+                "To track team leaders, enter lineups with player names separated by '&' or ',' "
+                "when submitting matches (e.g. `Skan & Jonny & Suri`). "
+                "The **first player name** in each team is automatically designated as the leader!"
+            )
+            embed.set_footer(text="eFootball Co-op Captains • /best-team-leader")
+            await interaction.followup.send(embed=embed)
+            return
+
+        medals = ["🥇", "🥈", "🥉"]
+        lines = []
+        for idx, ldr in enumerate(leaders[:25], start=1):
+            rank_str = medals[idx - 1] if idx <= 3 else f"`#{idx}`"
+            win_word = "Win" if ldr["wins"] == 1 else "Wins"
+            match_word = "match" if ldr["matches_led"] == 1 else "matches"
+            lines.append(
+                f"{rank_str} **{ldr['player']}**: 👑 **{ldr['wins']} {win_word}** "
+                f"• {ldr['matches_led']} {match_word} led "
+                f"({ldr['win_rate']:.1f}% WR) — {ldr['losses']}L, {ldr['draws']}D"
+            )
+
+        embed.description += "\n" + "\n".join(lines)
+
+        if winning_leaders:
+            top_leader = winning_leaders[0]
+            embed.add_field(
+                name="⭐ Most Successful Captain",
+                value=(
+                    f"👑 **{top_leader['player']}** leads the lobby with **{top_leader['wins']} wins** "
+                    f"across {top_leader['matches_led']} matches led ({top_leader['win_rate']:.1f}% WR)!"
+                ),
+                inline=False,
+            )
+
+        embed.set_footer(text=f"Showing {len(leaders)} leaders • Leader = 1st player in team lineup")
         await interaction.followup.send(embed=embed)
 
     # 10. /fair-teams

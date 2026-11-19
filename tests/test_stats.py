@@ -913,6 +913,72 @@ def test_calculate_player_chemistry() -> None:
     assert chem["kryptonite"]["player"] == "Azlan"
 
 
+def test_calculate_team_leader_aggregates() -> None:
+    """Verifies that the first player of each team is treated as the leader and ranked by wins."""
+    from stats import calculate_team_leader_aggregates, extract_match_team_leaders
+
+    m1 = MatchRecord(
+        match_id="M-TL-01",
+        date="2026-11-19 10:00:00",
+        result=MatchResult.HOME_WIN,
+        submitted_by="Admin",
+        notes="Score: Skan & Jonny & Suri 4 - 2 Shallowe & Naka & Azlan (Home Win)",
+        player_stats=[
+            PlayerStat(player="Skan", goals=2, assists=1, result=MatchResult.WIN),
+            PlayerStat(player="Jonny", goals=1, assists=1, result=MatchResult.WIN),
+            PlayerStat(player="Suri", goals=1, assists=0, result=MatchResult.WIN),
+            PlayerStat(player="Shallowe", goals=1, assists=0, result=MatchResult.LOSS),
+            PlayerStat(player="Naka", goals=1, assists=1, result=MatchResult.LOSS),
+            PlayerStat(player="Azlan", goals=0, assists=0, result=MatchResult.LOSS),
+        ],
+    )
+    m2 = MatchRecord(
+        match_id="M-TL-02",
+        date="2026-11-19 11:00:00",
+        result=MatchResult.AWAY_WIN,
+        submitted_by="Admin",
+        notes="Score: Lilly & Azlan 1 - 3 Skan & Annie (Away Win)",
+        player_stats=[
+            PlayerStat(player="Lilly", goals=1, assists=0, result=MatchResult.LOSS),
+            PlayerStat(player="Azlan", goals=0, assists=1, result=MatchResult.LOSS),
+            PlayerStat(player="Skan", goals=2, assists=1, result=MatchResult.WIN),
+            PlayerStat(player="Annie", goals=1, assists=1, result=MatchResult.WIN),
+        ],
+    )
+
+    h1, a1 = extract_match_team_leaders(m1)
+    assert h1 == "Skan"
+    assert a1 == "Shallowe"
+
+    h2, a2 = extract_match_team_leaders(m2)
+    assert h2 == "Lilly"
+    assert a2 == "Skan"
+
+    leaders = calculate_team_leader_aggregates([m1, m2])
+    assert len(leaders) == 3
+
+    # Skan led 2 matches and won both
+    skan_rec = next(l for l in leaders if l["player"] == "Skan")
+    assert skan_rec["wins"] == 2
+    assert skan_rec["matches_led"] == 2
+    assert skan_rec["win_rate"] == 100.0
+
+    # Shallowe led 1 and lost
+    shallowe_rec = next(l for l in leaders if l["player"] == "Shallowe")
+    assert shallowe_rec["wins"] == 0
+    assert shallowe_rec["matches_led"] == 1
+    assert shallowe_rec["losses"] == 1
+
+    # Lilly led 1 and lost
+    lilly_rec = next(l for l in leaders if l["player"] == "Lilly")
+    assert lilly_rec["wins"] == 0
+    assert lilly_rec["matches_led"] == 1
+    assert lilly_rec["losses"] == 1
+
+    # Skan ranked #1
+    assert leaders[0]["player"] == "Skan"
+
+
 
 
 

@@ -28,6 +28,7 @@ LOGGER = logging.getLogger("efootball_bot.excel_manager")
 SHEET_MATCHES = "Matches"
 SHEET_PLAYER_STATS = "PlayerStats"
 SHEET_LEADERBOARD = "Leaderboard"
+SHEET_LEADERS = "TeamLeaders"
 
 MATCHES_HEADERS = [
     "MatchID",
@@ -68,6 +69,15 @@ LEADERBOARD_HEADERS = [
     "CleanSheets",
 ]
 
+LEADERS_HEADERS = [
+    "Leader",
+    "Wins",
+    "MatchesLed",
+    "Losses",
+    "Draws",
+    "WinRate%",
+]
+
 HEADER_FILL = PatternFill(start_color="1F4E79", end_color="1F4E79", fill_type="solid")
 HEADER_FONT = Font(name="Segoe UI", size=11, bold=True, color="FFFFFF")
 DATA_FONT = Font(name="Segoe UI", size=10)
@@ -105,6 +115,9 @@ class ExcelManager:
             ws_lb = wb.create_sheet(title=SHEET_LEADERBOARD)
             self._format_header(ws_lb, LEADERBOARD_HEADERS)
 
+            ws_ldr = wb.create_sheet(title=SHEET_LEADERS)
+            self._format_header(ws_ldr, LEADERS_HEADERS)
+
             wb.save(self.workbook_path)
             wb.close()
             LOGGER.info("Workbook initialized successfully with headers and filters.")
@@ -113,7 +126,7 @@ class ExcelManager:
         try:
             wb = openpyxl.load_workbook(self.workbook_path)
             try:
-                # Ensure all 3 sheets exist
+                # Ensure all sheets exist
                 if SHEET_MATCHES not in wb.sheetnames:
                     ws_m = wb.create_sheet(title=SHEET_MATCHES)
                     self._format_header(ws_m, MATCHES_HEADERS)
@@ -123,6 +136,9 @@ class ExcelManager:
                 if SHEET_LEADERBOARD not in wb.sheetnames:
                     ws_l = wb.create_sheet(title=SHEET_LEADERBOARD)
                     self._format_header(ws_l, LEADERBOARD_HEADERS)
+                if SHEET_LEADERS not in wb.sheetnames:
+                    ws_ldr = wb.create_sheet(title=SHEET_LEADERS)
+                    self._format_header(ws_ldr, LEADERS_HEADERS)
 
                 self._sync_recalculate_all_sheets(wb)
                 wb.save(self.workbook_path)
@@ -441,6 +457,47 @@ class ExcelManager:
                 elif c_idx in (10, 11, 12):
                     cell.number_format = "0.00"
 
+        # 3. Completely rebuild TeamLeaders sheet
+        if SHEET_LEADERS in wb.sheetnames:
+            del wb[SHEET_LEADERS]
+        ws_leaders = wb.create_sheet(title=SHEET_LEADERS)
+        self._format_header(ws_leaders, LEADERS_HEADERS)
+
+        all_match_records = [
+            MatchRecord(
+                match_id=m["match_id"],
+                date=m["date"],
+                result=m["result"],
+                submitted_by=m["submitted_by"],
+                screenshot_ref=m["screenshot_ref"],
+                notes=m["notes"],
+                player_stats=m["player_stats"],
+            )
+            for m in matches_info
+        ]
+        from stats import calculate_team_leader_aggregates
+
+        leader_aggs = calculate_team_leader_aggregates(all_match_records)
+        for ldr in leader_aggs:
+            r = ws_leaders.max_row + 1
+            row_data = [
+                ldr["player"],
+                ldr["wins"],
+                ldr["matches_led"],
+                ldr["losses"],
+                ldr["draws"],
+                ldr["win_rate"],
+            ]
+            ws_leaders.append(row_data)
+            for c_idx in range(1, len(row_data) + 1):
+                cell = ws_leaders.cell(row=r, column=c_idx)
+                cell.font = DATA_FONT
+                cell.border = BORDER_THIN
+                if c_idx >= 2:
+                    cell.alignment = Alignment(horizontal="center")
+                if c_idx == 6:
+                    cell.number_format = '0.0"%"'
+
     async def save_match(self, match: MatchRecord) -> MatchRecord:
         """Appends a validated match and all associated player statistics atomically."""
         async with self._lock:
@@ -606,6 +663,11 @@ class ExcelManager:
                 ws_lb = wb[SHEET_LEADERBOARD]
                 if ws_lb.max_row > 1:
                     ws_lb.delete_rows(2, ws_lb.max_row)
+
+            if SHEET_LEADERS in wb.sheetnames:
+                ws_ldr = wb[SHEET_LEADERS]
+                if ws_ldr.max_row > 1:
+                    ws_ldr.delete_rows(2, ws_ldr.max_row)
 
             wb.save(self.workbook_path)
             LOGGER.info("Deleted all %d matches from workbook.", match_count)
@@ -807,6 +869,58 @@ class ExcelManager:
                     "gapg": gapg,
                     "hattricks": hattricks,
                     "clean_sheets": clean_sheets,
+                })
+            return records
+        finally:
+            wb.close()
+
+    async def get_team_leaders_from_sheet(self) -> List[dict]:
+        """Returns the sorted team leaders records from the TeamLeaders sheet."""
+        async with self._lock:
+            return self._sync_get_team_leaders_from_sheet()
+
+    def _sync_get_team_leaders_from_sheet(self) -> List[dict]:
+        if not self.workbook_path.exists():
+            return []
+        wb = openpyxl.load_workbook(self.workbook_path, data_only=True)
+        try:
+            if SHEET_LEADERS not in wb.sheetnames:
+                return []
+            ws = wb[SHEET_LEADERS]
+            records: List[dict] = []
+            for r in range(2, ws.max_row + 1):
+                p_val = ws.cell(row=r, column=1).value
+                if not p_val:
+                    continue
+                player = str(p_val).strip()
+
+                def _safe_int(c: int) -> int:
+                    val = ws.cell(row=r, column=c).value
+                    try:
+                        return int(float(val)) if val is not None else 0
+                    except (ValueError, TypeError):
+                        return 0
+
+                def _safe_float(c: int) -> float:
+                    val = ws.cell(row=r, column=c).value
+                    try:
+                        return float(val) if val is not None else 0.0
+                    except (ValueError, TypeError):
+                        return 0.0
+
+                wins = _safe_int(2)
+                matches_led = _safe_int(3)
+                losses = _safe_int(4)
+                draws = _safe_int(5)
+                win_rate = _safe_float(6)
+
+                records.append({
+                    "player": player,
+                    "wins": wins,
+                    "matches_led": matches_led,
+                    "losses": losses,
+                    "draws": draws,
+                    "win_rate": win_rate,
                 })
             return records
         finally:

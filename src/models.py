@@ -93,6 +93,17 @@ def canonicalize_player_name(name: str) -> str:
     return raw
 
 
+def parse_players_from_team_param(team_param: Optional[str]) -> List[str]:
+    """Parses player names if user provided a string like 'S1 and S2', 'S1 & S2', 'S1, S2'."""
+    if not team_param:
+        return []
+    s = team_param.strip()
+    if s.lower() in ("home", "away", "opponent", "opponents", "none", "xi", "team"):
+        return []
+    parts = re.split(r"\s+(?:and|&|\+)\s*|,\s*", s, flags=re.IGNORECASE)
+    return [canonicalize_player_name(p.strip()) for p in parts if p.strip()]
+
+
 class MatchResult(str, Enum):
     """Result of an eFootball match."""
 
