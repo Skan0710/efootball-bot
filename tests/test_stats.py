@@ -548,11 +548,12 @@ def test_potm_rankings_calendar_month_and_rollover() -> None:
     assert m_start == datetime(2027, 1, 1, 0, 0, 0)
     assert m_end.date() == datetime(2027, 1, 31).date()
 
-    # Suri: 3G, 5A, 1W -> 1.2 + 2.0 + 0.2 = 3.4
-    # Ashy: 3G, 1A, 1W -> 1.2 + 0.4 + 0.2 = 1.8
+    # Suri: 3G, 5A, 1W -> base 3.4, POTW pts 8 -> final score 3.4
+    # Ashy: 3G, 1A, 1W -> base 1.8, POTW pts 5 -> 0.9*1.8 + 0.1*3.4*(5/8) = 1.83
     assert [r["player"] for r in jan_rankings] == ["Suri", "Ashy"]
     assert jan_rankings[0]["score"] == 3.4
-    assert jan_rankings[1]["score"] == 1.8
+    assert jan_rankings[1]["base_score"] == 1.8
+    assert jan_rankings[1]["score"] == 1.83
 
     # months_ago=1 from Jan 2027 rolls back cleanly to Dec 2026
     dec_rankings, dec_start, dec_end = calculate_potm_rankings(
@@ -1165,6 +1166,107 @@ def test_filter_matches_from_leader_start() -> None:
     jonny_rec = next(l for l in leaders if l["player"] == "Jonny")
     assert jonny_rec["wins"] == 1
     assert jonny_rec["matches_led"] == 1
+
+
+def test_calculate_special_card_stats_totw_and_potm() -> None:
+    """Verifies that TOTW gets 90+ OVR, POTM gets 95+ OVR, and the base card is untouched."""
+    from stats import calculate_special_card_stats, calculate_player_card_stats
+
+    records = [
+        {
+            "player": "Jonny",
+            "matches_played": 10,
+            "wins": 7,
+            "draws": 1,
+            "losses": 2,
+            "goals": 12,
+            "assists": 8,
+            "gapg": 2.0,
+            "win_rate": 70.0,
+        }
+    ]
+    matches = [
+        MatchRecord(
+            match_id="M-1",
+            date="2026-11-10 12:00:00",
+            result=MatchResult.HOME_WIN,
+            submitted_by="Admin",
+            player_stats=[
+                PlayerStat(player="Jonny", goals=2, assists=1, result=MatchResult.WIN),
+            ],
+        )
+    ]
+
+    base_card = calculate_player_card_stats("Jonny", records, matches)
+    assert base_card is not None
+    base_ovr = base_card["rating"]
+    base_pac = base_card["pace"]
+
+    # TOTW: guaranteed 90+ OVR
+    totw_card = calculate_special_card_stats("Jonny", records, matches, card_type="TOTW")
+    assert totw_card is not None
+    assert totw_card["rating"] >= 90
+    assert totw_card["rating"] <= 99
+    assert totw_card["card_type"] == "TOTW"
+    assert totw_card["tier_label"] == "TEAM OF THE WEEK"
+    assert totw_card["pace"] >= base_pac
+
+    # POTM: guaranteed 95+ OVR
+    potm_card = calculate_special_card_stats("Jonny", records, matches, card_type="POTM")
+    assert potm_card is not None
+    assert potm_card["rating"] >= 95
+    assert potm_card["rating"] <= 99
+    assert potm_card["card_type"] == "POTM"
+    assert potm_card["tier_label"] == "PLAYER OF THE MONTH"
+    assert potm_card["rating"] >= totw_card["rating"]
+    assert potm_card["pace"] >= totw_card["pace"]
+
+    # Base card is completely untouched (no side-effects / mutations)
+    assert base_card["rating"] == base_ovr
+    assert base_card["pace"] == base_pac
+
+
+def test_calculate_potm_rankings_with_potw_weight() -> None:
+    """Verifies POTM ranking incorporates weekly POTW form (0.9 match stats + 0.1 POTW weightage)."""
+    from stats import calculate_potm_rankings
+
+    # Week 1: Skan dominates and wins POTW
+    m_w1 = MatchRecord(
+        match_id="M-W1",
+        date="2026-11-03 15:00:00",
+        result=MatchResult.HOME_WIN,
+        submitted_by="Admin",
+        player_stats=[
+            PlayerStat(player="Skan", goals=5, assists=3, result=MatchResult.WIN),
+            PlayerStat(player="Jonny", goals=1, assists=0, result=MatchResult.WIN),
+        ],
+    )
+    # Week 2: Jonny plays well
+    m_w2 = MatchRecord(
+        match_id="M-W2",
+        date="2026-11-10 15:00:00",
+        result=MatchResult.HOME_WIN,
+        submitted_by="Admin",
+        player_stats=[
+            PlayerStat(player="Jonny", goals=2, assists=2, result=MatchResult.WIN),
+            PlayerStat(player="Skan", goals=0, assists=1, result=MatchResult.WIN),
+        ],
+    )
+
+    matches = [m_w1, m_w2]
+    rankings, m_start, m_end = calculate_potm_rankings(
+        matches, reference_date=datetime(2026, 11, 15, 12, 0, 0), months_ago=0
+    )
+
+    assert len(rankings) == 2
+    skan_rec = next(r for r in rankings if r["player"] == "Skan")
+    jonny_rec = next(r for r in rankings if r["player"] == "Jonny")
+
+    # Skan won week 1 POTW, so has potw_cards and potw_bonus
+    assert skan_rec["potw_cards"] >= 1
+    assert "potw_bonus" in skan_rec
+    assert "base_score" in skan_rec
+    assert skan_rec["score"] > 0
 
 
 

@@ -45,6 +45,7 @@ from stats import (
     calculate_potm_rankings,
     calculate_potw_rankings,
     calculate_session_recap,
+    calculate_special_card_stats,
     calculate_squad_lineup,
     calculate_captain_head_to_head,
     calculate_team_leader_aggregates,
@@ -2345,11 +2346,14 @@ def register_commands(
         color: discord.Color,
     ) -> discord.Embed:
         winner = rankings[0]
+        extra_winner_desc = ""
+        if winner.get("potw_cards"):
+            extra_winner_desc = f" · 🌟 **{winner['potw_cards']}** POTW Card(s)"
         embed = discord.Embed(
             title=title,
             description=(
                 f"👑 **{winner['player']}** leads with **{winner['score']:.2f}** pts "
-                f"({winner['goals']}G, {winner['assists']}A, {winner['wins']}W in {winner['matches_played']} MP)\n"
+                f"({winner['goals']}G, {winner['assists']}A, {winner['wins']}W in {winner['matches_played']} MP{extra_winner_desc})\n"
             ),
             color=color,
             timestamp=datetime.now(),
@@ -2359,9 +2363,10 @@ def register_commands(
         lines = []
         for rank, r in enumerate(rankings[:20], start=1):
             badge = medals[rank - 1] if rank <= 3 else f"**#{rank}**"
+            potw_str = f" · 🌟 {r['potw_cards']} POTW" if r.get("potw_cards") else ""
             lines.append(
                 f"{badge} **{r['player']}** — **{r['score']:.2f}** pts "
-                f"({r['goals']}G · {r['assists']}A · {r['wins']}W · {r['matches_played']} MP)"
+                f"({r['goals']}G · {r['assists']}A · {r['wins']}W · {r['matches_played']} MP{potw_str})"
             )
 
         embed.add_field(name=field_name, value="\n\n".join(lines), inline=False)
@@ -2402,12 +2407,31 @@ def register_commands(
             rankings=rankings,
             color=discord.Color.gold(),
         )
-        await interaction.followup.send(embed=embed)
+
+        winner_name = rankings[0]["player"]
+        leaderboard_records = await excel_manager.get_leaderboard_from_sheet()
+        totw_card = calculate_special_card_stats(
+            winner_name, leaderboard_records, all_matches, card_type="TOTW"
+        )
+        card_file: Optional[discord.File] = None
+        if totw_card:
+            try:
+                card_buf = render_fc27_card(totw_card)
+                card_filename = f"TOTW_{winner_name}.png"
+                card_file = discord.File(card_buf, filename=card_filename)
+                embed.set_image(url=f"attachment://{card_filename}")
+            except Exception as card_err:
+                LOGGER.warning("Could not render TOTW card: %s", card_err)
+
+        if card_file:
+            await interaction.followup.send(embed=embed, file=card_file)
+        else:
+            await interaction.followup.send(embed=embed)
 
     # 8. /potm
     @tree.command(
         name="potm",
-        description="Show Player of the Month ranked by 0.4*Goals + 0.4*Assists + 0.2*Wins.",
+        description="Show Player of the Month ranked by 0.9*(0.4G + 0.4A + 0.2W) + 0.1*POTW Form.",
     )
     @app_commands.describe(months_ago="0 for current month (default), 1 for last month, etc.")
     async def potm(interaction: discord.Interaction, months_ago: Optional[int] = 0) -> None:
@@ -2434,11 +2458,30 @@ def register_commands(
         embed = _build_weighted_award_embed(
             title=f"🏅 Player of the Month — {month_label}",
             field_name="Monthly Standings",
-            footer_text="Score = 0.4×Goals + 0.4×Assists + 0.2×Wins • Calendar Month",
+            footer_text="Score = 0.9×(0.4G + 0.4A + 0.2W) + 0.1×POTW Form • Calendar Month",
             rankings=rankings,
             color=discord.Color.orange(),
         )
-        await interaction.followup.send(embed=embed)
+
+        winner_name = rankings[0]["player"]
+        leaderboard_records = await excel_manager.get_leaderboard_from_sheet()
+        potm_card = calculate_special_card_stats(
+            winner_name, leaderboard_records, all_matches, card_type="POTM"
+        )
+        card_file: Optional[discord.File] = None
+        if potm_card:
+            try:
+                card_buf = render_fc27_card(potm_card)
+                card_filename = f"POTM_{winner_name}.png"
+                card_file = discord.File(card_buf, filename=card_filename)
+                embed.set_image(url=f"attachment://{card_filename}")
+            except Exception as card_err:
+                LOGGER.warning("Could not render POTM card: %s", card_err)
+
+        if card_file:
+            await interaction.followup.send(embed=embed, file=card_file)
+        else:
+            await interaction.followup.send(embed=embed)
 
     # 8. /best-team
     @tree.command(

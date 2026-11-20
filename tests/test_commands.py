@@ -1476,6 +1476,50 @@ async def test_auto_gazette_and_pundit_on_match_save(test_config: BotConfig, tmp
     assert any("gazette" in t.lower() for t in embed_titles)
 
 
+@pytest.mark.asyncio
+async def test_check_and_announce_potw_automated(test_config: BotConfig, tmp_path: Path) -> None:
+    """Verifies that check_and_announce_potw announces the completed gameweek with a TOTW card and guards against duplicate runs."""
+    from datetime import datetime, timedelta
+    from stats import get_calendar_week_bounds
+
+    bot = EFootballBot(test_config)
+    em = bot.excel_manager
+
+    # Construct match in the previous completed week
+    w_start, w_end = get_calendar_week_bounds(weeks_ago=1)
+    match_dt = w_start + timedelta(days=2, hours=10)
+    match_record = MatchRecord(
+        match_id="M-POTW-TEST",
+        date=match_dt.strftime("%Y-%m-%d %H:%M:%S"),
+        result=MatchResult.HOME_WIN,
+        submitted_by="Admin",
+        player_stats=[
+            PlayerStat(player="Skan", goals=4, assists=2, result=MatchResult.WIN),
+            PlayerStat(player="Jonny", goals=1, assists=1, result=MatchResult.WIN),
+        ],
+    )
+    await em.save_match(match_record)
+
+    mock_channel = MagicMock(spec=discord.TextChannel)
+    mock_channel.send = AsyncMock()
+
+    bot.get_channel = MagicMock(return_value=mock_channel)
+
+    announced = await bot.check_and_announce_potw()
+    assert announced is True
+    assert mock_channel.send.call_count == 1
+    call_args = mock_channel.send.call_args[1]
+    assert "Gameweek is complete" in mock_channel.send.call_args[1]["content"]
+    assert "Player of the Week" in call_args["embed"].title
+    assert "Skan" in call_args["embed"].description
+    assert "file" in call_args
+
+    # Check that a consecutive call does not re-announce (idempotent / deduplicated)
+    second_run = await bot.check_and_announce_potw()
+    assert second_run is False
+    assert mock_channel.send.call_count == 1
+
+
 
 
 

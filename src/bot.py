@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
+import json
 import logging
 import sys
 from pathlib import Path
@@ -40,6 +42,7 @@ class EFootballBot(commands.Bot):
         self.guild_object = discord.Object(id=self.bot_config.guild_id)
         self.excel_manager = ExcelManager(self.bot_config.workbook_path)
         self._last_gazette_published_week: Optional[str] = None
+        self._last_announced_potw_week: Optional[str] = None
 
         # Register the 6 required slash commands
         register_commands(self.tree, self.bot_config, self.excel_manager)
@@ -82,6 +85,125 @@ class EFootballBot(commands.Bot):
         # Start periodic weekly gazette automation
         if not self.auto_gazette_task.is_running():
             self.auto_gazette_task.start()
+
+        # Start periodic POTW gameweek completion automation
+        if not self.auto_potw_task.is_running():
+            self.auto_potw_task.start()
+
+    def _get_potw_state_file(self) -> Path:
+        return self.bot_config.workbook_path.parent / "potw_state.json"
+
+    def _load_potw_state(self) -> Optional[str]:
+        p = self._get_potw_state_file()
+        if p.exists():
+            try:
+                data = json.loads(p.read_text(encoding="utf-8"))
+                return data.get("last_announced_week")
+            except Exception:
+                return None
+        return None
+
+    def _save_potw_state(self, week_key: str) -> None:
+        p = self._get_potw_state_file()
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(json.dumps({"last_announced_week": week_key}), encoding="utf-8")
+        except Exception as exc:
+            LOGGER.warning("Could not save POTW state: %s", exc)
+
+    async def check_and_announce_potw(self) -> bool:
+        """Checks if the completed gameweek has ended and automatically announces POTW with a special 90+ TOTW card."""
+        try:
+            target_channel_id = self.bot_config.allowed_channel_id
+            if not target_channel_id:
+                return False
+
+            all_matches = await self.excel_manager.get_all_matches()
+            if not all_matches:
+                return False
+
+            from stats import calculate_potw_rankings, calculate_special_card_stats
+            from visuals import render_fc27_card
+
+            # Check last completed calendar week (weeks_ago=1)
+            rankings, week_start, week_end = calculate_potw_rankings(all_matches, weeks_ago=1)
+            if not rankings:
+                return False
+
+            week_key = f"{week_start.strftime('%Y-W%U')}"
+            last_announced = self._load_potw_state() or self._last_announced_potw_week
+            if last_announced == week_key:
+                return False
+
+            channel = self.get_channel(target_channel_id)
+            if not channel:
+                try:
+                    channel = await self.fetch_channel(target_channel_id)
+                except Exception:
+                    channel = None
+
+            if not isinstance(channel, discord.abc.Messageable):
+                return False
+
+            winner = rankings[0]
+            week_range = f"{week_start.strftime('%d %b')} – {week_end.strftime('%d %b %Y')}"
+
+            records = await self.excel_manager.get_leaderboard_from_sheet()
+            totw_card = calculate_special_card_stats(winner["player"], records, all_matches, card_type="TOTW")
+
+            card_file: Optional[discord.File] = None
+            card_filename = f"totw_{winner['player'].lower()}_card.png"
+            if totw_card:
+                try:
+                    card_buf = render_fc27_card(totw_card)
+                    card_file = discord.File(fp=card_buf, filename=card_filename)
+                except Exception as c_exc:
+                    LOGGER.warning("Failed to render automated TOTW card: %s", c_exc)
+
+            buff_ovr = totw_card["rating"] if totw_card else 90
+            embed = discord.Embed(
+                title=f"🌟 Player of the Week — {week_range}",
+                description=(
+                    f"👑 Congratulations to **{winner['player']}** for winning **Player of the Week**!\n\n"
+                    f"**Gameweek Stats:** {winner['goals']} Goals, {winner['assists']} Assists, "
+                    f"{winner['wins']} Wins in {winner['matches_played']} matches ({winner['score']:.2f} pts).\n\n"
+                    f"⚡ Awarded a special **{buff_ovr} OVR Team of the Week (TOTW) Card** (90+ Buff)!"
+                ),
+                color=discord.Color.gold(),
+                timestamp=datetime.now(),
+            )
+            if card_file:
+                embed.set_image(url=f"attachment://{card_filename}")
+            embed.set_footer(text="Official eFootball Weekly Honors • TOTW Special Card (Base Card Unchanged)")
+
+            if card_file:
+                await channel.send(
+                    content="📢 **The Gameweek is complete! All hail our latest Player of the Week!**",
+                    embed=embed,
+                    file=card_file,
+                )
+            else:
+                await channel.send(
+                    content="📢 **The Gameweek is complete! All hail our latest Player of the Week!**",
+                    embed=embed,
+                )
+
+            self._last_announced_potw_week = week_key
+            self._save_potw_state(week_key)
+            LOGGER.info("Successfully announced POTW for week %s to channel %s", week_key, target_channel_id)
+            return True
+        except Exception as exc:
+            LOGGER.warning("Error in check_and_announce_potw: %s", exc)
+            return False
+
+    @tasks.loop(hours=1)
+    async def auto_potw_task(self) -> None:
+        """Periodically checks if the gameweek is over and automatically announces POTW."""
+        await self.check_and_announce_potw()
+
+    @auto_potw_task.before_loop
+    async def before_potw_task(self) -> None:
+        await self.wait_until_ready()
 
     @tasks.loop(hours=2)
     async def auto_gazette_task(self) -> None:
@@ -137,6 +259,8 @@ class EFootballBot(commands.Bot):
             await self.change_presence(
                 activity=discord.Game(name="eFootball Co-op | /add-match-image")
             )
+            # Announce completed POTW the moment the bot is on
+            await self.check_and_announce_potw()
 
     async def on_message(self, message: discord.Message) -> None:
         """Listens for screenshots pasted directly (Ctrl+V) into authorized channel."""

@@ -349,9 +349,90 @@ def calculate_potm_rankings(
     reference_date: Optional[datetime] = None,
     months_ago: int = 0,
 ) -> Tuple[List[dict], datetime, datetime]:
-    """Computes Player of the Month rankings using 0.4*Goals + 0.4*Assists + 0.2*Wins."""
+    """Computes Player of the Month rankings with 0.9 weight for match performance and 0.1 for POTW achievements.
+
+    Base criteria (0.4*Goals + 0.4*Assists + 0.2*Wins across the month) scaled to 0.9 weightage.
+    POTW criteria (weekly POTW cards won and weekly POTW leaderboard rank points) scaled to max 0.1 weightage.
+    """
     month_start, month_end = get_calendar_month_bounds(reference_date=reference_date, months_ago=months_ago)
-    return _calculate_weighted_rankings(matches, month_start, month_end), month_start, month_end
+    monthly_entries = _calculate_weighted_rankings(matches, month_start, month_end)
+    if not monthly_entries:
+        return [], month_start, month_end
+
+    # Group matches in this month by ISO calendar week (year, week)
+    month_matches = [
+        m for m in matches
+        if parse_match_datetime(m.date) and month_start <= parse_match_datetime(m.date) <= month_end
+    ]
+
+    distinct_weeks: set[Tuple[int, int]] = set()
+    for m in month_matches:
+        dt = parse_match_datetime(m.date)
+        if dt:
+            iso = dt.isocalendar()
+            distinct_weeks.add((iso.year, iso.week))
+
+    potw_cards: Dict[str, int] = {}
+    potw_rank_points: Dict[str, float] = {}
+
+    for year, week_num in distinct_weeks:
+        first_day_of_year = datetime(year, 1, 4)
+        first_monday = first_day_of_year - timedelta(days=first_day_of_year.isoweekday() - 1)
+        w_start = first_monday + timedelta(weeks=week_num - 1)
+        w_start = w_start.replace(hour=0, minute=0, second=0, microsecond=0)
+        w_end = w_start + timedelta(days=6, hours=23, minutes=59, seconds=59)
+
+        w_rankings = _calculate_weighted_rankings(matches, w_start, w_end)
+        if not w_rankings:
+            continue
+
+        for idx, wr in enumerate(w_rankings, start=1):
+            pk = canonicalize_player_name(wr["player"]).strip().lower()
+            if idx == 1:
+                potw_cards[pk] = potw_cards.get(pk, 0) + 1
+                potw_rank_points[pk] = potw_rank_points.get(pk, 0.0) + 5.0
+            elif idx == 2:
+                potw_rank_points[pk] = potw_rank_points.get(pk, 0.0) + 3.0
+            elif idx == 3:
+                potw_rank_points[pk] = potw_rank_points.get(pk, 0.0) + 2.0
+            elif idx <= 5:
+                potw_rank_points[pk] = potw_rank_points.get(pk, 0.0) + 1.0
+
+    max_base_score = max((e["score"] for e in monthly_entries), default=0.0)
+    max_potw_pts = max(potw_rank_points.values(), default=0.0)
+
+    for e in monthly_entries:
+        pk = canonicalize_player_name(e["player"]).strip().lower()
+        base_score = e["score"]
+        c_count = potw_cards.get(pk, 0)
+        r_points = potw_rank_points.get(pk, 0.0)
+
+        # Base criteria gets 0.9 weightage
+        base_component = 0.9 * base_score
+
+        # POTW criteria gets max 0.1 weightage relative to top performance
+        potw_factor = (r_points / max_potw_pts) if max_potw_pts > 0 else 0.0
+        potw_bonus = 0.1 * max_base_score * potw_factor
+
+        e["base_score"] = base_score
+        e["potw_cards"] = c_count
+        e["potw_points"] = round(r_points, 1)
+        e["potw_bonus"] = round(potw_bonus, 2)
+        e["score"] = round(base_component + potw_bonus, 2)
+
+    monthly_entries.sort(
+        key=lambda r: (
+            r["score"],
+            r.get("potw_cards", 0),
+            r["goals"],
+            r["assists"],
+            r["wins"],
+            -r["losses"],
+            r["matches_played"],
+        ),
+        reverse=True,
+    )
+    return monthly_entries, month_start, month_end
 
 
 def calculate_best_teams(matches: List[MatchRecord]) -> List[dict]:
@@ -1658,6 +1739,55 @@ def calculate_player_card_stats(
         "goals_conceded": goals_conceded,
         "clean_sheets": clean_sheets,
     }
+
+
+def calculate_special_card_stats(
+    player_name: str,
+    leaderboard_records: List[dict],
+    matches: List[MatchRecord],
+    card_type: str = "TOTW",
+) -> Optional[dict]:
+    """Calculates special edition player card stats with OVR buffs without affecting base cards.
+
+    - 'TOTW' (Team/Player of the Week): Buffed to 90+ OVR (min 90, max 99), with attributes scaled up.
+    - 'POTM' (Player of the Month): Buffed to 95+ OVR (min 95, max 99), with attributes scaled up.
+    """
+    if not leaderboard_records and matches:
+        all_stats = [ps for m in matches for ps in m.player_stats]
+        aggregates = calculate_player_aggregates(all_stats, matches=matches)
+        leaderboard_records = list(aggregates.values())
+
+    base_card = calculate_player_card_stats(player_name, leaderboard_records, matches)
+    if not base_card:
+        return None
+
+    card = dict(base_card)  # Shallow copy so base card dict is never modified
+    base_ovr = int(card.get("rating", 75))
+
+    clean_type = card_type.strip().upper()
+    if clean_type == "POTM":
+        # Guaranteed 95+ OVR buff
+        target_ovr = max(95, min(99, base_ovr + max(10, 95 - base_ovr)))
+        tier_label = "PLAYER OF THE MONTH"
+    else:
+        # Guaranteed 90+ OVR buff for TOTW
+        target_ovr = max(90, min(99, base_ovr + max(8, 90 - base_ovr)))
+        tier_label = "TEAM OF THE WEEK"
+
+    delta = max(0, target_ovr - base_ovr)
+    card["rating"] = target_ovr
+    card["card_type"] = clean_type
+    card["tier_label"] = tier_label
+
+    for stat_key in [
+        "pace", "shooting", "passing", "dribbling", "defending", "physical",
+        "div", "han", "kic", "ref", "spe", "pos",
+        "diving", "handling", "kicking", "reflexes", "speed", "positioning",
+    ]:
+        if stat_key in card and isinstance(card[stat_key], (int, float)):
+            card[stat_key] = int(min(99, card[stat_key] + delta))
+
+    return card
 
 
 def calculate_player_chemistry(player_name: str, matches: List[MatchRecord]) -> dict:

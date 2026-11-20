@@ -98,8 +98,34 @@ def _find_team_logo(pfp_dir: Optional[Path] = None) -> Optional[Path]:
     return None
 
 
-def _card_theme(rating: int, is_tribute: bool = False) -> Dict[str, Tuple[int, int, int]]:
-    """Selects EA FC 27 tier color palette based on OVR rating."""
+def _card_theme(rating: int, is_tribute: bool = False, card_type: Optional[str] = None) -> Dict[str, Tuple[int, int, int]]:
+    """Selects EA FC 27 tier color palette based on OVR rating and card edition."""
+    clean_type = (card_type or "").strip().upper()
+    if clean_type in ("TOTW", "POTW"):
+        # EA FC 27 Team of the Week In-Form (Deep Charcoal Onyx with Neon Gold Border)
+        return {
+            "bg_top": (22, 22, 28),
+            "bg_bot": (10, 10, 14),
+            "accent": (245, 197, 24),
+            "accent_soft": (88, 72, 22),
+            "text": (255, 230, 130),
+            "subtext": (220, 195, 130),
+            "divider": (210, 168, 30),
+            "tier_label": "TEAM OF THE WEEK",
+        }
+    if clean_type == "POTM":
+        # EA FC 27 Player of the Month (Deep Plum Violet & Royal Gold)
+        return {
+            "bg_top": (46, 12, 68),
+            "bg_bot": (20, 5, 32),
+            "accent": (255, 215, 0),
+            "accent_soft": (125, 42, 155),
+            "text": (255, 238, 165),
+            "subtext": (225, 190, 225),
+            "divider": (225, 175, 45),
+            "tier_label": "PLAYER OF THE MONTH",
+        }
+
     if is_tribute or rating >= 88:
         # Icon / TOTY Royal Gold
         return {
@@ -164,7 +190,11 @@ def _lerp_color(
 def render_fc27_card(card: dict) -> io.BytesIO:
     """Renders an FC 27 Ultimate Team-style PNG card into an in-memory PNG buffer."""
     width, height = 460, 660
-    theme = _card_theme(int(card["rating"]), is_tribute=bool(card.get("is_tribute")))
+    theme = _card_theme(
+        int(card["rating"]),
+        is_tribute=bool(card.get("is_tribute")),
+        card_type=card.get("card_type"),
+    )
 
     # Outer shield silhouette points (classic UT / FC 27 card shape)
     shield_outer = [
