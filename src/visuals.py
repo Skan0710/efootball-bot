@@ -126,7 +126,7 @@ def _card_theme(rating: int, is_tribute: bool = False, card_type: Optional[str] 
             "tier_label": "PLAYER OF THE MONTH",
         }
 
-    if is_tribute or rating >= 88:
+    if is_tribute or rating >= 95:
         # Icon / TOTY Royal Gold
         return {
             "bg_top": (16, 26, 62),
@@ -645,7 +645,7 @@ def render_tierlist_card(tiers: Dict[str, List[dict]]) -> io.BytesIO:
     draw.text((width // 2, 64), "Calibrated by Career OVR & Matchday Form", font=_load_font(13, bold=False), fill=(160, 172, 198), anchor="mm")
 
     tier_configs = [
-        ("S", (239, 68, 68), "ELITE / TOTY (88+ OVR)"),
+        ("S", (239, 68, 68), "ELITE / S-TIER (88+ OVR)"),
         ("A", (249, 115, 22), "GOLD RARE (78-87 OVR)"),
         ("B", (59, 130, 246), "SILVER STAR (70-77 OVR)"),
         ("C", (148, 163, 184), "DEVELOPING (<70 OVR)"),

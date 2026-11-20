@@ -480,3 +480,26 @@ def test_defensive_quota_and_roster_lineup() -> None:
     total_assigned = len(lineup["goalkeepers"]) + len(lineup["defenders"]) + len(lineup["midfielders"]) + len(lineup["attackers"])
     assert total_assigned == len(lineup["all_players"])
     assert len(lineup["defenders"]) == 4
+
+
+def test_toty_icon_card_theme_threshold_95() -> None:
+    """Verifies that cards >= 95 OVR get TOTY ICON art, while 86-94 stay as GOLD RARE."""
+    from visuals import _card_theme
+
+    theme_86 = _card_theme(rating=86)
+    assert theme_86["tier_label"] == "GOLD RARE"
+
+    theme_88 = _card_theme(rating=88)
+    assert theme_88["tier_label"] == "GOLD RARE"
+
+    theme_94 = _card_theme(rating=94)
+    assert theme_94["tier_label"] == "GOLD RARE"
+
+    theme_95 = _card_theme(rating=95)
+    assert theme_95["tier_label"] == "TOTY ICON"
+
+    theme_99_toty = _card_theme(rating=99)
+    assert theme_99_toty["tier_label"] == "TOTY ICON"
+
+    theme_tribute = _card_theme(rating=99, is_tribute=True)
+    assert theme_tribute["tier_label"] == "TRIBUTE ICON"
