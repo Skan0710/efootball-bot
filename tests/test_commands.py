@@ -1425,6 +1425,57 @@ async def test_captain_h2h_command(test_config: BotConfig) -> None:
     assert "M-CH2H-TEST" in embed.fields[2].value
 
 
+@pytest.mark.asyncio
+async def test_auto_gazette_and_pundit_on_match_save(test_config: BotConfig, tmp_path: Path) -> None:
+    """Verifies that saving a match automatically triggers both AI Pundit review and Match Gazette."""
+    from commands_handler import MatchPreviewView
+    from ocr import OCRPlayerCandidate
+
+    em = ExcelManager(tmp_path / "matches.xlsx")
+
+    mock_channel = MagicMock(spec=discord.TextChannel)
+    mock_channel.send = AsyncMock()
+
+    candidates = [OCRPlayerCandidate(player="Skan", goals=2, assists=1)]
+    away_candidates = [OCRPlayerCandidate(player="Azlan", goals=1, assists=0)]
+
+    view = MatchPreviewView(
+        submitting_user_id=1001,
+        candidates=candidates,
+        result=MatchResult.HOME_WIN,
+        excel_manager=em,
+        image_hash="test_auto_gazette_hash",
+        home_team="Skan",
+        away_team="Azlan",
+        home_score=2,
+        away_score=1,
+        away_candidates=away_candidates,
+        config=test_config,
+    )
+
+    inter = MagicMock(spec=discord.Interaction)
+    inter.user.id = 1001
+    inter.user.display_name = "Skan"
+    inter.user.name = "Skan"
+    inter.channel = mock_channel
+    inter.response.defer = AsyncMock()
+    inter.edit_original_response = AsyncMock()
+
+    await view.confirm_button.callback(inter)
+
+    # Verify channel.send was called:
+    # 1. Match saved announcement
+    # 2. Pundit review
+    # 3. Match Gazette
+    assert mock_channel.send.call_count >= 3
+    sent_embeds = [call.kwargs.get("embed") for call in mock_channel.send.call_args_list if call.kwargs.get("embed")]
+    embed_titles = [e.title for e in sent_embeds if e and e.title]
+
+    assert any("match saved" in t.lower() for t in embed_titles)
+    assert any("pundit" in t.lower() for t in embed_titles)
+    assert any("gazette" in t.lower() for t in embed_titles)
+
+
 
 
 

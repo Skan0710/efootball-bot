@@ -780,6 +780,24 @@ class MatchPreviewView(discord.ui.View):
                 except Exception as p_exc:
                     LOGGER.warning("Automatic pundit breakdown failed: %s", p_exc)
 
+                # Automatic Match Gazette (Tabloid matchday edition strictly for this match)
+                try:
+                    from ai_gazette import build_gazette_embed, generate_match_gazette
+
+                    gazette_scoreline = format_match_scoreline(record)
+                    api_key = self.config.groq_api_key if self.config else None
+                    model = self.config.groq_vision_model if self.config else "qwen/qwen3.8-27b"
+                    g_edition = await generate_match_gazette(
+                        record,
+                        scoreline=gazette_scoreline,
+                        api_key=api_key,
+                        model=model,
+                    )
+                    g_embed = build_gazette_embed(g_edition, match=record)
+                    await target_channel.send(embed=g_embed)
+                except Exception as g_exc:
+                    LOGGER.warning("Automatic match gazette generation failed: %s", g_exc)
+
             LOGGER.info("Match %s saved by user %s (%s)", match_id, interaction.user.name, interaction.user.id)
         except PermissionError:
             LOGGER.warning("Excel workbook locked during match save: %s", match_id)
