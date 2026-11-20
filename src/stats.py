@@ -768,10 +768,11 @@ def compute_player_rating(record: dict | PlayerAggregateRecord) -> float:
 
 def compute_player_card_ovr(
     record: dict | PlayerAggregateRecord,
-    squad_baseline: float = 72.0,
-    damping_k: float = 3.5,
+    squad_baseline: float = 75.0,
+    damping_k: float = 1.5,
+    attributes: Optional[List[int]] = None,
 ) -> int:
-    """Computes the official confidence-weighted FC 27 Card OVR rating (60–99)."""
+    """Computes Dynamic Dual-Anchor Card OVR (50% Top-3 + 50% All-6) with Rookie Confidence Shield."""
     p_name = str(record.get("player", "") if isinstance(record, dict) else getattr(record, "player", "")).lower()
     if p_name == "harold" or "harold" in p_name:
         return 99
@@ -784,10 +785,53 @@ def compute_player_card_ovr(
     if mp <= 0:
         return 60
 
-    raw_rating = compute_player_rating(record)
-    raw_ovr = 60.0 + 0.38 * raw_rating
-    weighted_ovr = ((mp / (mp + damping_k)) * raw_ovr) + ((damping_k / (mp + damping_k)) * squad_baseline)
-    return int(max(60, min(99, round(weighted_ovr))))
+    if attributes and len(attributes) == 6:
+        s_sorted = sorted(attributes, reverse=True)
+        top3_mean = sum(s_sorted[:3]) / 3.0
+        all6_mean = sum(s_sorted) / 6.0
+        raw_ovr = 0.50 * top3_mean + 0.50 * all6_mean
+    else:
+        # Fallback estimation directly from record if attributes are not pre-computed
+        if isinstance(record, dict):
+            goals = int(record.get("goals", 0))
+            assists = int(record.get("assists", 0))
+            gpg = float(record.get("gpg", 0.0))
+            apg = float(record.get("apg", 0.0))
+            gapg = float(record.get("gapg", 0.0))
+            wr = float(record.get("win_rate", 0.0))
+            def_stat = record.get("defending")
+        else:
+            goals = int(record.goals)
+            assists = int(record.assists)
+            gpg = float(record.gpg)
+            apg = float(record.apg)
+            gapg = float(record.gapg)
+            wr = float(record.win_rate)
+            def_stat = getattr(record, "defending", None)
+
+        raw_r = compute_player_rating(record)
+        pace = int(max(71, min(99, round(70.0 + (raw_r / 100.0) * 28.0))))
+        goal_ratio = (goals / (goals + assists)) if (goals + assists) > 0 else 0.5
+        assist_ratio = (assists / (goals + assists)) if (goals + assists) > 0 else 0.5
+        shooting = int(max(60, min(99, round(58.0 + min(goals * 1.0, 20.0) + gpg * 6.5 + goal_ratio * 7.0))))
+        passing = int(max(60, min(99, round(58.0 + min(assists * 1.1, 20.0) + apg * 7.5 + assist_ratio * 8.0))))
+        dribbling = int(max(60, min(99, round(60.0 + gapg * 11.5))))
+        if def_stat is not None:
+            defending = int(def_stat)
+        else:
+            defending = int(max(60, min(90, round(62.0 + (wr / 100.0) * 18.0 + min(goals, 10) * 0.5))))
+        physical = int(max(60, min(99, round((defending + pace + dribbling) / 3.0))))
+
+        s_sorted = sorted([pace, shooting, passing, dribbling, defending, physical], reverse=True)
+        top3_mean = sum(s_sorted[:3]) / 3.0
+        all6_mean = sum(s_sorted) / 6.0
+        raw_ovr = 0.50 * top3_mean + 0.50 * all6_mean
+
+    # Rookie Confidence Shield for mp < 5
+    if mp < 5:
+        weighted_ovr = ((mp / (mp + damping_k)) * raw_ovr) + ((damping_k / (mp + damping_k)) * squad_baseline)
+        return int(max(60, min(99, round(weighted_ovr))))
+    return int(max(60, min(99, round(raw_ovr))))
 
 
 def determine_team_leader(team_players: List[dict]) -> dict:
@@ -1780,9 +1824,8 @@ def calculate_player_card_stats(
         wins = int(round((win_rate / 100.0) * mp))
     clean_sheets = int(record.get("clean_sheets", 0))
 
-    rating = compute_player_card_ovr(record)
-
-    pace = int(max(71, min(99, round(71.0 + (rating - 60) * (28.0 / 39.0)))))
+    raw_r = compute_player_rating(record)
+    pace = int(max(71, min(99, round(70.0 + (raw_r / 100.0) * 28.0))))
 
     # Realistic Shooting: Driven by goals, GPG, and goal conversion ratio
     goal_ratio = (goals / (goals + assists)) if (goals + assists) > 0 else 0.5
@@ -1805,6 +1848,12 @@ def calculate_player_card_stats(
         cs_map=cs_map,
     )
 
+    # Dynamic Dual-Anchor OVR: 50% Top-3 Mean + 50% All-6 Mean with Rookie Confidence Shield
+    prelim_phy = int(max(60, min(99, round((defending + pace + dribbling) / 3.0))))
+    rating = compute_player_card_ovr(
+        record,
+        attributes=[pace, shooting, passing, dribbling, defending, prelim_phy],
+    )
     physical = int(max(60, min(99, round((rating + pace + dribbling) / 3.0))))
 
     # Position Assignment: Use roster-wide tactical positioning or individual fallback

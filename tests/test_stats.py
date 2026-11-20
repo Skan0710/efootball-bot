@@ -577,11 +577,11 @@ def test_generate_fair_teams_4_5_6() -> None:
         {"player": "Annie", "matches_played": 8, "win_rate": 50.0, "gapg": 1.2, "gpg": 0.6},   # rating 41.0
     ]
 
-    # 4 players: FC 27 OVR ratings [88, 77, 76, 68] -> optimal is (88+68=156) vs (77+76=153), diff=3.0
+    # 4 players: Dual-Anchor OVR ratings [87, 78, 76, 68] -> optimal is (87+68=155) vs (78+76=154), diff=1.0
     split_4 = generate_fair_teams(["Suri", "Ashy", "SkanRocky", "maple"], records)
     assert len(split_4["team_a"]) == 2
     assert len(split_4["team_b"]) == 2
-    assert split_4["rating_diff"] == 3.0
+    assert split_4["rating_diff"] == 1.0
 
     # 5 players: 3v2 split
     split_5 = generate_fair_teams(["Suri", "Ashy", "Skan", "Lilly", "Azlan"], records)
