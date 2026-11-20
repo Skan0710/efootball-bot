@@ -143,6 +143,10 @@ async def test_preview_view_security_and_save(tmp_path: Path) -> None:
         OCRPlayerCandidate(player="SkanRocky", goals=2, assists=0),
         OCRPlayerCandidate(player="lillym", goals=0, assists=1),
     ]
+    away_candidates = [
+        OCRPlayerCandidate(player="Alex", goals=1, assists=0),
+        OCRPlayerCandidate(player="Bob", goals=0, assists=1),
+    ]
 
     view = MatchPreviewView(
         submitting_user_id=1001,
@@ -150,6 +154,7 @@ async def test_preview_view_security_and_save(tmp_path: Path) -> None:
         result=MatchResult.WIN,
         excel_manager=manager,
         image_hash="abc123hash",
+        away_candidates=away_candidates,
     )
 
     # 1. Other user interaction check
@@ -178,7 +183,7 @@ async def test_preview_view_security_and_save(tmp_path: Path) -> None:
     matches = await manager.get_all_matches()
     assert len(matches) == 1
     assert matches[0].result == MatchResult.WIN
-    assert len(matches[0].player_stats) == 2
+    assert len(matches[0].player_stats) == 4
 
 
 @pytest.mark.asyncio
@@ -194,10 +199,11 @@ async def test_edit_stats_modal_validation() -> None:
     view.away_candidates = []
     modal = EditStatsModal(parent_view=view)
 
-    # Valid multi-player input
+    # Valid multi-player input (2v2 balanced)
     modal.stats_input._value = "SkanRocky, 2, 1\nlillym, 0, 3"
+    modal.away_stats_input._value = "Alex, 1, 0\nBob, 0, 1"
     modal.result_input._value = "Win"
-    modal.scores_input._value = "2, 0"
+    modal.scores_input._value = "2, 1"
     interaction = MagicMock(spec=discord.Interaction)
     interaction.response.edit_message = AsyncMock()
 
@@ -1436,8 +1442,14 @@ async def test_auto_gazette_and_pundit_on_match_save(test_config: BotConfig, tmp
     mock_channel = MagicMock(spec=discord.TextChannel)
     mock_channel.send = AsyncMock()
 
-    candidates = [OCRPlayerCandidate(player="Skan", goals=2, assists=1)]
-    away_candidates = [OCRPlayerCandidate(player="Azlan", goals=1, assists=0)]
+    candidates = [
+        OCRPlayerCandidate(player="Skan", goals=2, assists=1),
+        OCRPlayerCandidate(player="Suri", goals=0, assists=1),
+    ]
+    away_candidates = [
+        OCRPlayerCandidate(player="Azlan", goals=1, assists=0),
+        OCRPlayerCandidate(player="Annie", goals=0, assists=0),
+    ]
 
     view = MatchPreviewView(
         submitting_user_id=1001,
@@ -1518,6 +1530,101 @@ async def test_check_and_announce_potw_automated(test_config: BotConfig, tmp_pat
     second_run = await bot.check_and_announce_potw()
     assert second_run is False
     assert mock_channel.send.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_add_match_roster_filter_minimum_and_equal_teams(tmp_path: Path) -> None:
+    """Verifies that matches require >=2 players per team and strictly equal team sizes."""
+    from commands_handler import MatchPreviewView, AddMatchTextModal
+    from ocr import OCRPlayerCandidate
+
+    em = ExcelManager(tmp_path / "filter_test.xlsx")
+
+    # 1. Reject if home < 2 players (1v1)
+    view_1v1 = MatchPreviewView(
+        submitting_user_id=1,
+        candidates=[OCRPlayerCandidate("Skan", 1, 0)],
+        result=MatchResult.HOME_WIN,
+        excel_manager=em,
+        image_hash="hash_1v1",
+        away_candidates=[OCRPlayerCandidate("Azlan", 0, 0)],
+    )
+    inter_1v1 = MagicMock(spec=discord.Interaction)
+    inter_1v1.response.send_message = AsyncMock()
+    await view_1v1.confirm_button.callback(inter_1v1)
+    inter_1v1.response.send_message.assert_called_once()
+    assert "at least 2 players" in inter_1v1.response.send_message.call_args[0][0]
+
+    # 2. Reject if away < 2 players (2v1)
+    view_2v1 = MatchPreviewView(
+        submitting_user_id=1,
+        candidates=[OCRPlayerCandidate("Skan", 1, 0), OCRPlayerCandidate("Suri", 0, 0)],
+        result=MatchResult.HOME_WIN,
+        excel_manager=em,
+        image_hash="hash_2v1",
+        away_candidates=[OCRPlayerCandidate("Azlan", 0, 0)],
+    )
+    inter_2v1 = MagicMock(spec=discord.Interaction)
+    inter_2v1.response.send_message = AsyncMock()
+    await view_2v1.confirm_button.callback(inter_2v1)
+    inter_2v1.response.send_message.assert_called_once()
+    assert "at least 2 players" in inter_2v1.response.send_message.call_args[0][0]
+
+    # 3. Reject if unequal team counts (3v2)
+    view_3v2 = MatchPreviewView(
+        submitting_user_id=1,
+        candidates=[
+            OCRPlayerCandidate("P1", 1, 0),
+            OCRPlayerCandidate("P2", 0, 0),
+            OCRPlayerCandidate("P3", 0, 0),
+        ],
+        result=MatchResult.HOME_WIN,
+        excel_manager=em,
+        image_hash="hash_3v2",
+        away_candidates=[
+            OCRPlayerCandidate("P4", 0, 0),
+            OCRPlayerCandidate("P5", 0, 0),
+        ],
+    )
+    inter_3v2 = MagicMock(spec=discord.Interaction)
+    inter_3v2.response.send_message = AsyncMock()
+    await view_3v2.confirm_button.callback(inter_3v2)
+    inter_3v2.response.send_message.assert_called_once()
+    assert "equal number of players" in inter_3v2.response.send_message.call_args[0][0]
+
+    # 4. Reject in AddMatchTextModal on unequal or < 2 players
+    modal = AddMatchTextModal(excel_manager=em)
+    modal.home_stats_input._value = "P1, 1, 0\nP2, 0, 0\nP3, 0, 0"
+    modal.away_stats_input._value = "P4, 0, 0\nP5, 0, 0"
+    modal.scores_input._value = "1, 0"
+    modal.result_input._value = "Home Win"
+
+    inter_modal = MagicMock(spec=discord.Interaction)
+    inter_modal.response.send_message = AsyncMock()
+    await modal.on_submit(inter_modal)
+    inter_modal.response.send_message.assert_called_once()
+    assert "equal number of players" in inter_modal.response.send_message.call_args[0][0]
+
+    # 5. Accept valid 2v2
+    view_2v2 = MatchPreviewView(
+        submitting_user_id=1,
+        candidates=[OCRPlayerCandidate("P1", 1, 0), OCRPlayerCandidate("P2", 0, 0)],
+        result=MatchResult.HOME_WIN,
+        excel_manager=em,
+        image_hash="hash_2v2",
+        away_candidates=[OCRPlayerCandidate("P3", 0, 0), OCRPlayerCandidate("P4", 0, 0)],
+    )
+    inter_2v2 = MagicMock(spec=discord.Interaction)
+    inter_2v2.response.defer = AsyncMock()
+    inter_2v2.edit_original_response = AsyncMock()
+    inter_2v2.user.display_name = "SubmittingUser"
+    inter_2v2.user.name = "SubmittingUser"
+    inter_2v2.channel = None
+    await view_2v2.confirm_button.callback(inter_2v2)
+    inter_2v2.edit_original_response.assert_called_once()
+    saved = await em.get_all_matches()
+    assert len(saved) == 1
+    assert len(saved[0].player_stats) == 4
 
 
 

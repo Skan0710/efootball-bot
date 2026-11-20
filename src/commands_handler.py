@@ -473,6 +473,20 @@ class EditStatsModal(discord.ui.Modal, title="Edit Match Players, Stats & Result
             )
             return
 
+        if len(new_home_c) < 2 or len(new_away_c) < 2:
+            await interaction.response.send_message(
+                f"❌ Co-op matches require at least 2 players in both Home and Away teams (got {len(new_home_c)} Home vs {len(new_away_c)} Away).\n\nPlease click **Edit Stats** and try again.",
+                ephemeral=True,
+            )
+            return
+
+        if len(new_home_c) != len(new_away_c):
+            await interaction.response.send_message(
+                f"❌ Home and Away teams must have an equal number of players (got {len(new_home_c)} Home vs {len(new_away_c)} Away). It cannot be unequal.\n\nPlease click **Edit Stats** and try again.",
+                ephemeral=True,
+            )
+            return
+
         # Update Teams if provided
         teams_val = self.teams_input.value.strip()
         if teams_val and "," in teams_val:
@@ -579,9 +593,19 @@ class MatchPreviewView(discord.ui.View):
 
     @discord.ui.button(label="Confirm & Save", style=discord.ButtonStyle.success, emoji="✅")
     async def confirm_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        if not self.candidates and not self.away_candidates:
+        num_home = len(self.candidates)
+        num_away = len(self.away_candidates)
+
+        if num_home < 2 or num_away < 2:
             await interaction.response.send_message(
-                "❌ Cannot save a match with 0 players. Use **Edit Stats** to add players first.",
+                f"❌ Co-op matches require at least 2 players in both Home and Away teams (got {num_home} Home vs {num_away} Away). Please use **Edit Stats** to update the roster.",
+                ephemeral=True,
+            )
+            return
+
+        if num_home != num_away:
+            await interaction.response.send_message(
+                f"❌ Home and Away teams must have an equal number of players (got {num_home} Home vs {num_away} Away). It cannot be unequal. Please use **Edit Stats** to balance the teams.",
                 ephemeral=True,
             )
             return
@@ -898,6 +922,20 @@ class AddMatchTextModal(discord.ui.Modal, title="Edit Match Players, Stats & Res
             )
             return
 
+        if len(new_home_c) < 2 or len(new_away_c) < 2:
+            await interaction.response.send_message(
+                f"❌ Co-op matches require at least 2 players in both Home and Away teams (got {len(new_home_c)} Home vs {len(new_away_c)} Away).\n\nPlease run `/add-match-text` and try again.",
+                ephemeral=True,
+            )
+            return
+
+        if len(new_home_c) != len(new_away_c):
+            await interaction.response.send_message(
+                f"❌ Home and Away teams must have an equal number of players (got {len(new_home_c)} Home vs {len(new_away_c)} Away). It cannot be unequal.\n\nPlease run `/add-match-text` and try again.",
+                ephemeral=True,
+            )
+            return
+
         h_team = "Home"
         a_team = "Away"
         teams_val = self.teams_input.value.strip()
@@ -1042,6 +1080,20 @@ class EditSavedMatchModal(discord.ui.Modal, title="Edit Saved Match"):
         if all_errors:
             await interaction.response.send_message(
                 "❌ **Validation Errors:**\n" + "\n".join(all_errors[:5]),
+                ephemeral=True,
+            )
+            return
+
+        if len(new_home_c) < 2 or len(new_away_c) < 2:
+            await interaction.response.send_message(
+                f"❌ Co-op matches require at least 2 players in both Home and Away teams (got {len(new_home_c)} Home vs {len(new_away_c)} Away).",
+                ephemeral=True,
+            )
+            return
+
+        if len(new_home_c) != len(new_away_c):
+            await interaction.response.send_message(
+                f"❌ Home and Away teams must have an equal number of players (got {len(new_home_c)} Home vs {len(new_away_c)} Away). It cannot be unequal.",
                 ephemeral=True,
             )
             return
@@ -1710,6 +1762,10 @@ def register_commands(
             if is_duplicate:
                 duplicate_msg = "⚠️ This exact screenshot appears to have already been submitted recently."
                 error_notice = f"{duplicate_msg}\n{error_notice}" if error_notice else duplicate_msg
+
+            if len(home_candidates) < 2 or len(away_candidates) < 2 or len(home_candidates) != len(away_candidates):
+                roster_msg = f"⚠️ Roster Filter: Co-op matches require ≥2 players per team and equal team sizes ({len(home_candidates)} Home vs {len(away_candidates)} Away detected). Use **Edit Stats** to adjust before saving."
+                error_notice = f"{roster_msg}\n{error_notice}" if error_notice else roster_msg
 
             # 5. Display interactive private preview
             h_team_name = " & ".join(parsed_home) if parsed_home else (home_team.strip() if home_team else "Home")
