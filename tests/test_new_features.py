@@ -420,3 +420,63 @@ async def test_new_slash_commands_execution(test_config: BotConfig) -> None:
     await pred_cmd.callback(inter_pred, outcome=choice_mock, score="2-1")
     inter_pred.response.send_message.assert_called_once()
     assert "Prediction Locked In!" in inter_pred.response.send_message.call_args[1]["embed"].title
+
+
+def test_defensive_quota_and_roster_lineup() -> None:
+    """Verifies that 4 defenders (1 LB, 2 CB, 1 RB) exist when fullbacks are available, and 3 CBs exist when no fullbacks are available."""
+    from stats import assign_roster_positions, calculate_squad_lineup
+    from models import MatchRecord, MatchResult, PlayerStat
+
+    # 1. Test when both LB and RB are available -> exactly 4 defenders with 2 CBs
+    records_with_fb = [
+        {"player": "Harold", "matches_played": 10, "goals": 0, "assists": 0, "win_rate": 100.0},
+        {"player": "LeftBack", "matches_played": 10, "goals": 1, "assists": 2, "gapg": 1.5, "win_rate": 80.0, "clean_sheets": 5},
+        {"player": "RightBack", "matches_played": 10, "goals": 0, "assists": 1, "gapg": 1.5, "win_rate": 80.0, "clean_sheets": 4},
+        {"player": "CenterBack1", "matches_played": 10, "goals": 0, "assists": 0, "win_rate": 75.0, "clean_sheets": 4},
+        {"player": "CenterBack2", "matches_played": 10, "goals": 1, "assists": 0, "win_rate": 70.0, "clean_sheets": 3},
+        {"player": "Midfielder1", "matches_played": 10, "goals": 5, "assists": 10, "win_rate": 80.0},
+        {"player": "Striker1", "matches_played": 10, "goals": 15, "assists": 2, "win_rate": 70.0},
+    ]
+
+    cs_matches = [
+        MatchRecord(
+            match_id="M-DEF-1",
+            date="2026-11-10 12:00:00",
+            result=MatchResult.HOME_WIN,
+            submitted_by="Admin",
+            player_stats=[
+                PlayerStat(player="LeftBack", goals=0, assists=0, result=MatchResult.WIN),
+                PlayerStat(player="RightBack", goals=0, assists=0, result=MatchResult.WIN),
+                PlayerStat(player="CenterBack1", goals=0, assists=0, result=MatchResult.WIN),
+                PlayerStat(player="CenterBack2", goals=0, assists=0, result=MatchResult.WIN),
+            ],
+        )
+    ]
+
+    positions_fb = assign_roster_positions(records_with_fb, cs_matches)
+    cbs_fb = [p for p, pos in positions_fb.items() if pos == "CB"]
+    lbs_fb = [p for p, pos in positions_fb.items() if pos == "LB"]
+    rbs_fb = [p for p, pos in positions_fb.items() if pos == "RB"]
+
+    assert len(lbs_fb) == 1
+    assert len(rbs_fb) == 1
+    assert len(cbs_fb) == 2  # exactly 2 CBs with LB and RB
+
+    # 2. Test when NO fullbacks are available -> at least 3 CBs are required
+    records_no_fb = [
+        {"player": "Harold", "matches_played": 10, "goals": 0, "assists": 0, "win_rate": 100.0},
+        {"player": "Player1", "matches_played": 10, "goals": 10, "assists": 2, "win_rate": 70.0},
+        {"player": "Player2", "matches_played": 10, "goals": 8, "assists": 3, "win_rate": 70.0},
+        {"player": "Player3", "matches_played": 10, "goals": 2, "assists": 0, "win_rate": 60.0},
+        {"player": "Player4", "matches_played": 10, "goals": 1, "assists": 1, "win_rate": 60.0},
+        {"player": "Player5", "matches_played": 10, "goals": 0, "assists": 0, "win_rate": 60.0},
+    ]
+    positions_no_fb = assign_roster_positions(records_no_fb, [])
+    cbs_no_fb = [p for p, pos in positions_no_fb.items() if pos == "CB"]
+    assert len(cbs_no_fb) >= 3  # at least 3 CBs must be selected when no LB and RB
+
+    # 3. Test calculate_squad_lineup has no bench / all players assigned to starting zones
+    lineup = calculate_squad_lineup(records_with_fb, cs_matches)
+    total_assigned = len(lineup["goalkeepers"]) + len(lineup["defenders"]) + len(lineup["midfielders"]) + len(lineup["attackers"])
+    assert total_assigned == len(lineup["all_players"])
+    assert len(lineup["defenders"]) == 4
