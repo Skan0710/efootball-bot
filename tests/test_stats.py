@@ -1269,6 +1269,38 @@ def test_calculate_potm_rankings_with_potw_weight() -> None:
     assert skan_rec["score"] > 0
 
 
+def test_compute_player_defending_stat_pure_hybrid() -> None:
+    """Verifies that Pure Hybrid (1, 2) rewards true defensive output with high defending stats."""
+    from stats import compute_player_defending_stat
+
+    records = [
+        # Skan: Elite defender (low conceded, high clean sheets)
+        {"player": "Skan", "matches_played": 25, "wins": 18, "win_rate": 72.0, "clean_sheets": 5},
+        # Suri: Top defensive anchor (lowest conceded, highest clean sheets)
+        {"player": "Suri", "matches_played": 25, "wins": 18, "win_rate": 72.0, "clean_sheets": 6},
+        # AttackerX: Concedes 3.5+ goals per game, 0 clean sheets
+        {"player": "AttackerX", "matches_played": 20, "wins": 6, "win_rate": 30.0, "clean_sheets": 0},
+    ]
+
+    cs_map = {
+        "skan": {"goals_conceded": 45, "clean_sheets": 5, "matches": 25},      # 1.80 GC/game
+        "suri": {"goals_conceded": 40, "clean_sheets": 6, "matches": 25},      # 1.60 GC/game
+        "attackerx": {"goals_conceded": 72, "clean_sheets": 0, "matches": 20}, # 3.60 GC/game
+    }
+
+    skan_def, _, _ = compute_player_defending_stat("Skan", records[0], [], all_records=records, cs_map=cs_map)
+    suri_def, _, _ = compute_player_defending_stat("Suri", records[1], [], all_records=records, cs_map=cs_map)
+    att_def, _, _ = compute_player_defending_stat("AttackerX", records[2], [], all_records=records, cs_map=cs_map)
+
+    # Suri and Skan should both receive elite defending (88+)
+    assert suri_def >= 88
+    assert skan_def >= 86
+    assert suri_def >= skan_def
+    # AttackerX who concedes 3.6 goals per game should be significantly lower
+    assert att_def <= 70
+    assert suri_def - att_def >= 18
+
+
 
 
 
