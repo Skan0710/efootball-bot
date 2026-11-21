@@ -143,39 +143,6 @@ def test_build_gazette_embed() -> None:
 
 
 @pytest.mark.asyncio
-async def test_gazette_slash_command(sample_week_matches: list[MatchRecord], tmp_path: Path) -> None:
-    """Verifies /gazette command execution."""
-    cfg = BotConfig(
-        discord_token="fake_token",
-        guild_id=1122334455,
-        workbook_path=tmp_path / "test_wb.xlsx",
-        allowed_channel_id=999888777,
-    )
-    em = ExcelManager(cfg.workbook_path)
-    for m in sample_week_matches:
-        await em.save_match(m)
-
-    bot = EFootballBot(cfg)
-    bot.excel_manager = em
-    cmd_map = {cmd.name: cmd for cmd in bot.tree.get_commands()}
-    gazette_cmd = cmd_map["gazette"]
-
-    inter = MagicMock(spec=discord.Interaction)
-    inter.guild_id = cfg.guild_id
-    inter.channel_id = cfg.allowed_channel_id
-    inter.response = MagicMock()
-    inter.response.defer = AsyncMock()
-    inter.followup = MagicMock()
-    inter.followup.send = AsyncMock()
-
-    await gazette_cmd.callback(inter, week=None)
-    inter.response.defer.assert_called_once()
-    inter.followup.send.assert_called_once()
-    called_embed = inter.followup.send.call_args[1]["embed"]
-    assert "CO-OP GAZETTE" in called_embed.title
-
-
-@pytest.mark.asyncio
 async def test_generate_match_gazette_and_embed(sample_week_matches: list[MatchRecord]) -> None:
     """Verifies single-match gazette special edition and embed generation."""
     match = sample_week_matches[0]
@@ -188,36 +155,3 @@ async def test_generate_match_gazette_and_embed(sample_week_matches: list[MatchR
     assert "Matchday Special" in embed.title
     assert "M-W1-01" in embed.title
     assert len(embed.fields) == 4
-
-
-@pytest.mark.asyncio
-async def test_gazette_slash_command_single_match(sample_week_matches: list[MatchRecord], tmp_path: Path) -> None:
-    """Verifies /gazette defaults to latest match when no argument is supplied."""
-    cfg = BotConfig(
-        discord_token="fake_token",
-        guild_id=1122334455,
-        workbook_path=tmp_path / "test_wb2.xlsx",
-        allowed_channel_id=999888777,
-    )
-    em = ExcelManager(cfg.workbook_path)
-    for m in sample_week_matches:
-        await em.save_match(m)
-
-    bot = EFootballBot(cfg)
-    bot.excel_manager = em
-    cmd_map = {cmd.name: cmd for cmd in bot.tree.get_commands()}
-    gazette_cmd = cmd_map["gazette"]
-
-    inter = MagicMock(spec=discord.Interaction)
-    inter.guild_id = cfg.guild_id
-    inter.channel_id = cfg.allowed_channel_id
-    inter.response = MagicMock()
-    inter.response.defer = AsyncMock()
-    inter.followup = MagicMock()
-    inter.followup.send = AsyncMock()
-
-    await gazette_cmd.callback(inter, target="M-W1-01")
-    inter.response.defer.assert_called_once()
-    inter.followup.send.assert_called_once()
-    called_embed = inter.followup.send.call_args[1]["embed"]
-    assert "M-W1-01" in called_embed.title

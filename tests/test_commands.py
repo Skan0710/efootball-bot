@@ -49,7 +49,6 @@ def test_command_registration_names(test_config: BotConfig, tmp_path: Path) -> N
         "matches",
         "latest-match",
         "pundit",
-        "gazette",
         "teammates",
         "potw",
         "potm",
@@ -1432,22 +1431,40 @@ async def test_captain_h2h_command(test_config: BotConfig) -> None:
 
 
 @pytest.mark.asyncio
-async def test_auto_gazette_and_pundit_on_match_save(test_config: BotConfig, tmp_path: Path) -> None:
-    """Verifies that saving a match automatically triggers both AI Pundit review and Match Gazette."""
+async def test_auto_hof_and_pundit_on_match_save(test_config: BotConfig, tmp_path: Path) -> None:
+    """Verifies that saving a match triggers AI Pundit review and Hall of Fame auto-trigger on overwrite, but no Gazette."""
     from commands_handler import MatchPreviewView
     from ocr import OCRPlayerCandidate
 
     em = ExcelManager(tmp_path / "matches.xlsx")
 
+    # Seed baseline match so baseline Hall of Fame exists (margin 1, max goals 1)
+    await em.save_match(
+        MatchRecord(
+            match_id="M-SEED-01",
+            date="2026-11-18 10:00:00",
+            result=MatchResult.HOME_WIN,
+            submitted_by="Admin",
+            notes="Score: Skan & Jonny 2 - 1 Azlan & Annie (Home Win)",
+            player_stats=[
+                PlayerStat(player="Skan", goals=1, assists=0, result=MatchResult.HOME_WIN),
+                PlayerStat(player="Jonny", goals=1, assists=1, result=MatchResult.HOME_WIN),
+                PlayerStat(player="Azlan", goals=1, assists=0, result=MatchResult.AWAY_WIN),
+                PlayerStat(player="Annie", goals=0, assists=1, result=MatchResult.AWAY_WIN),
+            ],
+        )
+    )
+
     mock_channel = MagicMock(spec=discord.TextChannel)
     mock_channel.send = AsyncMock()
 
+    # New match: 4 - 0 Home win, Skan scores 3 goals -> breaks margin (+4 > +1) and max goals (3 > 1)
     candidates = [
-        OCRPlayerCandidate(player="Skan", goals=2, assists=1),
-        OCRPlayerCandidate(player="Suri", goals=0, assists=1),
+        OCRPlayerCandidate(player="Skan", goals=3, assists=1),
+        OCRPlayerCandidate(player="Suri", goals=1, assists=2),
     ]
     away_candidates = [
-        OCRPlayerCandidate(player="Azlan", goals=1, assists=0),
+        OCRPlayerCandidate(player="Azlan", goals=0, assists=0),
         OCRPlayerCandidate(player="Annie", goals=0, assists=0),
     ]
 
@@ -1456,11 +1473,11 @@ async def test_auto_gazette_and_pundit_on_match_save(test_config: BotConfig, tmp
         candidates=candidates,
         result=MatchResult.HOME_WIN,
         excel_manager=em,
-        image_hash="test_auto_gazette_hash",
+        image_hash="test_auto_hof_hash",
         home_team="Skan",
         away_team="Azlan",
-        home_score=2,
-        away_score=1,
+        home_score=4,
+        away_score=0,
         away_candidates=away_candidates,
         config=test_config,
     )
@@ -1475,17 +1492,23 @@ async def test_auto_gazette_and_pundit_on_match_save(test_config: BotConfig, tmp
 
     await view.confirm_button.callback(inter)
 
-    # Verify channel.send was called:
+    # Verify channel.send calls:
     # 1. Match saved announcement
-    # 2. Pundit review
-    # 3. Match Gazette
+    # 2. Hall of Fame auto-open (because records were overwritten)
+    # 3. Pundit review
+    # Notice: NO Match Gazette should be sent!
     assert mock_channel.send.call_count >= 3
     sent_embeds = [call.kwargs.get("embed") for call in mock_channel.send.call_args_list if call.kwargs.get("embed")]
     embed_titles = [e.title for e in sent_embeds if e and e.title]
 
     assert any("match saved" in t.lower() for t in embed_titles)
+    assert any("hall of fame" in t.lower() for t in embed_titles)
     assert any("pundit" in t.lower() for t in embed_titles)
-    assert any("gazette" in t.lower() for t in embed_titles)
+    assert not any("gazette" in t.lower() for t in embed_titles)
+
+    # Verify announcement message for Hall of Fame
+    sent_contents = [call.kwargs.get("content") for call in mock_channel.send.call_args_list if call.kwargs.get("content")]
+    assert any("HALL OF FAME OVERWRITTEN" in c for c in sent_contents if c)
 
 
 @pytest.mark.asyncio

@@ -16,6 +16,7 @@ from stats import (
     calculate_player_form,
     calculate_potm_rankings,
     calculate_potw_rankings,
+    detect_hall_of_fame_overwrites,
     generate_fair_teams,
     get_all_teammates,
     get_leaderboard,
@@ -728,6 +729,113 @@ def test_calculate_hall_of_fame() -> None:
     assert len(hof["clean_sheets"]) == 1
     assert hof["hattrick_king"].player == "Suri"
     assert hof["hattrick_king"].hattricks == 2
+
+
+def test_detect_hall_of_fame_overwrites() -> None:
+    """Verifies that detect_hall_of_fame_overwrites detects broken records and crown takeovers."""
+    base_matches = [
+        MatchRecord(
+            match_id="M-BASE-1",
+            date="2026-11-10 10:00:00",
+            result=MatchResult.HOME_WIN,
+            submitted_by="Skan",
+            notes="Score: Skan & Jonny 4 - 0 Azlan & Annie (Home Win)",
+            player_stats=[
+                PlayerStat(player="Skan", goals=3, assists=1, result=MatchResult.HOME_WIN),
+                PlayerStat(player="Jonny", goals=1, assists=3, result=MatchResult.HOME_WIN),
+                PlayerStat(player="Azlan", goals=0, assists=0, result=MatchResult.AWAY_WIN),
+                PlayerStat(player="Annie", goals=0, assists=0, result=MatchResult.AWAY_WIN),
+            ],
+        ),
+        MatchRecord(
+            match_id="M-BASE-2",
+            date="2026-11-10 12:00:00",
+            result=MatchResult.HOME_WIN,
+            submitted_by="Skan",
+            notes="Score: Skan & Jonny 3 - 1 Azlan & Annie (Home Win)",
+            player_stats=[
+                PlayerStat(player="Skan", goals=2, assists=1, result=MatchResult.HOME_WIN),
+                PlayerStat(player="Jonny", goals=1, assists=1, result=MatchResult.HOME_WIN),
+                PlayerStat(player="Azlan", goals=1, assists=0, result=MatchResult.AWAY_WIN),
+                PlayerStat(player="Annie", goals=0, assists=1, result=MatchResult.AWAY_WIN),
+            ],
+        ),
+        MatchRecord(
+            match_id="M-BASE-3",
+            date="2026-11-10 14:00:00",
+            result=MatchResult.HOME_WIN,
+            submitted_by="Skan",
+            notes="Score: Skan & Jonny 2 - 0 Azlan & Annie (Home Win)",
+            player_stats=[
+                PlayerStat(player="Skan", goals=2, assists=0, result=MatchResult.HOME_WIN),
+                PlayerStat(player="Jonny", goals=0, assists=2, result=MatchResult.HOME_WIN),
+                PlayerStat(player="Azlan", goals=0, assists=0, result=MatchResult.AWAY_WIN),
+                PlayerStat(player="Annie", goals=0, assists=0, result=MatchResult.AWAY_WIN),
+            ],
+        ),
+    ]
+
+    # 1. No matches before -> no overwrites
+    assert detect_hall_of_fame_overwrites([], base_matches) == []
+
+    # 2. Ordinary match with no records broken -> no overwrites
+    ordinary_match = MatchRecord(
+        match_id="M-ORD-1",
+        date="2026-11-11 10:00:00",
+        result=MatchResult.HOME_WIN,
+        submitted_by="Azlan",
+        notes="Score: Azlan & Annie 1 - 0 Skan & Jonny (Home Win)",
+        player_stats=[
+            PlayerStat(player="Azlan", goals=1, assists=0, result=MatchResult.HOME_WIN),
+            PlayerStat(player="Annie", goals=0, assists=1, result=MatchResult.HOME_WIN),
+            PlayerStat(player="Skan", goals=0, assists=0, result=MatchResult.AWAY_WIN),
+            PlayerStat(player="Jonny", goals=0, assists=0, result=MatchResult.AWAY_WIN),
+        ],
+    )
+    assert detect_hall_of_fame_overwrites(base_matches, base_matches + [ordinary_match]) == []
+
+    # 3. Match breaking biggest margin (+6 > +4), max single goals (4 > 3), and G/A
+    record_breaker = MatchRecord(
+        match_id="M-REC-1",
+        date="2026-11-12 10:00:00",
+        result=MatchResult.AWAY_WIN,
+        submitted_by="Suri",
+        notes="Score: Skan & Jonny 0 - 6 Suri & Lilly (Away Win)",
+        player_stats=[
+            PlayerStat(player="Skan", goals=0, assists=0, result=MatchResult.HOME_WIN),
+            PlayerStat(player="Jonny", goals=0, assists=0, result=MatchResult.HOME_WIN),
+            PlayerStat(player="Suri", goals=4, assists=2, result=MatchResult.AWAY_WIN),
+            PlayerStat(player="Lilly", goals=2, assists=3, result=MatchResult.AWAY_WIN),
+        ],
+    )
+
+    updates = detect_hall_of_fame_overwrites(base_matches, base_matches + [record_breaker])
+    assert len(updates) > 0
+    update_text = " ".join(updates)
+    assert "Biggest Win Margin" in update_text
+    assert "+6" in update_text
+    assert "Most Goals in One Match" in update_text
+    assert "Suri" in update_text
+    assert "Most G/A in One Match" in update_text
+
+    # 4. New player tying single match record (Azlan scores 3 goals)
+    tier_match = MatchRecord(
+        match_id="M-TIER-1",
+        date="2026-11-13 10:00:00",
+        result=MatchResult.HOME_WIN,
+        submitted_by="Azlan",
+        notes="Score: Azlan & Annie 3 - 0 Skan & Jonny (Home Win)",
+        player_stats=[
+            PlayerStat(player="Azlan", goals=3, assists=0, result=MatchResult.HOME_WIN),
+            PlayerStat(player="Annie", goals=0, assists=1, result=MatchResult.HOME_WIN),
+            PlayerStat(player="Skan", goals=0, assists=0, result=MatchResult.AWAY_WIN),
+            PlayerStat(player="Jonny", goals=0, assists=0, result=MatchResult.AWAY_WIN),
+        ],
+    )
+    tie_updates = detect_hall_of_fame_overwrites(base_matches, base_matches + [tier_match])
+    tie_text = " ".join(tie_updates)
+    assert "Azlan" in tie_text
+    assert "joined the Hall of Fame" in tie_text
 
 
 def test_clean_sheets_and_motm_milestones() -> None:

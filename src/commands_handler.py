@@ -51,6 +51,7 @@ from stats import (
     calculate_team_leader_aggregates,
     compute_player_card_ovr,
     compute_player_rating,
+    detect_hall_of_fame_overwrites,
     extract_match_scores,
     generate_fair_teams,
     get_all_teammates,
@@ -349,6 +350,70 @@ def build_preview_embed(
         )
 
     embed.set_footer(text="Only the submitting user can interact with these controls.")
+    return embed
+
+
+def build_hall_of_fame_embed(
+    hof: dict,
+    new_entries: Optional[List[str]] = None,
+) -> discord.Embed:
+    """Builds a polished Discord embed representing all-time Hall of Fame records."""
+    margin_lines = [format_match_scoreline(m) for m, _, _ in hof["biggest_margin_matches"][:3]]
+    total_lines = [format_match_scoreline(m) for m, _, _ in hof["highest_total_matches"][:3]]
+    clean_lines = [format_match_scoreline(m) for m, _, _ in reversed(hof["clean_sheets"])][:3]
+
+    sections = [
+        f"🔥 **Biggest Win Margin (+{hof['biggest_margin']} goals)**\n" + "\n".join(margin_lines),
+        f"🎯 **Highest-Scoring Match ({hof['highest_total']} total goals)**\n" + "\n".join(total_lines),
+        f"⚽ **Most Goals in One Match ({hof['max_single_goals']} goals)**\n"
+        + ", ".join(f"**{p}**" for p in hof["max_single_goals_players"]),
+        f"🅰️ **Most Assists in One Match ({hof['max_single_assists']} assists)**\n"
+        + ", ".join(f"**{p}**" for p in hof["max_single_assists_players"]),
+        f"🌟 **Most G/A in One Match ({hof['max_single_ga']} G/A)**\n"
+        + ", ".join(f"**{p}**" for p in hof["max_single_ga_players"]),
+    ]
+
+    if hof["best_win_streak"] > 0:
+        sections.append(
+            f"🚀 **Longest Win Streak ({hof['best_win_streak']} wins in a row)**\n"
+            + ", ".join(f"**{p}**" for p in hof["best_win_streak_players"])
+        )
+
+    if clean_lines:
+        sections.append(
+            f"🧤 **Clean Sheet Victories ({len(hof['clean_sheets'])} total)**\n" + "\n".join(clean_lines)
+        )
+
+    career_bits = []
+    if hof["top_scorer"]:
+        career_bits.append(f"Top Scorer: **{hof['top_scorer'].player}** ({hof['top_scorer'].goals}G)")
+    if hof["top_assister"]:
+        career_bits.append(f"Playmaker: **{hof['top_assister'].player}** ({hof['top_assister'].assists}A)")
+    if hof["hattrick_king"] and hof["hattrick_king"].hattricks > 0:
+        career_bits.append(f"Hattrick King: **{hof['hattrick_king'].player}** ({hof['hattrick_king'].hattricks})")
+    if career_bits:
+        sections.append("👑 **All-Time Legends**\n" + " · ".join(career_bits))
+
+    desc_parts = []
+    if new_entries:
+        desc_parts.append(
+            "🚨 **NEW ALL-TIME RECORD OVERWRITTEN!**\n"
+            + "\n".join(f"• {e}" for e in new_entries)
+            + "\n\n━━━━━━━━━━━━━━━━━━━━━━"
+        )
+    desc_parts.append("\n\n".join(sections))
+
+    title = "🏛️ eFootball Co-op Hall of Fame"
+    if new_entries:
+        title += " — New Entry Added!"
+
+    embed = discord.Embed(
+        title=title,
+        description="\n\n".join(desc_parts),
+        color=discord.Color.gold(),
+        timestamp=datetime.now(),
+    )
+    embed.set_footer(text=f"Computed across {hof['total_matches']} all-time matches")
     return embed
 
 
@@ -665,6 +730,7 @@ class MatchPreviewView(discord.ui.View):
         )
 
         try:
+            matches_before = await self.excel_manager.get_all_matches()
             await self.excel_manager.save_match(record)
             RECENT_IMAGE_HASHES.add(self.image_hash)
 
@@ -805,23 +871,18 @@ class MatchPreviewView(discord.ui.View):
                 except Exception as p_exc:
                     LOGGER.warning("Automatic pundit breakdown failed: %s", p_exc)
 
-                # Automatic Match Gazette (Tabloid matchday edition strictly for this match)
+                # Automatic Hall of Fame trigger if any record was overwritten
                 try:
-                    from ai_gazette import build_gazette_embed, generate_match_gazette
-
-                    gazette_scoreline = format_match_scoreline(record)
-                    api_key = self.config.groq_api_key if self.config else None
-                    model = self.config.groq_vision_model if self.config else "qwen/qwen3.8-27b"
-                    g_edition = await generate_match_gazette(
-                        record,
-                        scoreline=gazette_scoreline,
-                        api_key=api_key,
-                        model=model,
-                    )
-                    g_embed = build_gazette_embed(g_edition, match=record)
-                    await target_channel.send(embed=g_embed)
-                except Exception as g_exc:
-                    LOGGER.warning("Automatic match gazette generation failed: %s", g_exc)
+                    hof_updates = detect_hall_of_fame_overwrites(matches_before, all_matches)
+                    if hof_updates:
+                        hof_after = calculate_hall_of_fame(all_matches)
+                        hof_embed = build_hall_of_fame_embed(hof_after, new_entries=hof_updates)
+                        await target_channel.send(
+                            content="🏛️ 🏆 **HALL OF FAME OVERWRITTEN — A NEW ENTRY HAS ARRIVED!** 🏆 🏛️",
+                            embed=hof_embed,
+                        )
+                except Exception as hof_exc:
+                    LOGGER.warning("Automatic Hall of Fame check failed: %s", hof_exc)
 
             LOGGER.info("Match %s saved by user %s (%s)", match_id, interaction.user.name, interaction.user.id)
         except PermissionError:
@@ -2281,82 +2342,6 @@ def register_commands(
         embed = build_pundit_embed(review, target_match)
         await interaction.followup.send(embed=embed)
 
-    # 5d. /gazette
-    @tree.command(
-        name="gazette",
-        description="Read The Co-op Gazette — matchday special for a specific match or weekly tabloid edition.",
-    )
-    @app_commands.describe(
-        target="Optional Match ID or ISO week key (e.g. M-20261029-XXXXXX or 2026-W47; defaults to latest match)",
-        week="Optional ISO week key (legacy alias)",
-    )
-    async def gazette(
-        interaction: discord.Interaction,
-        target: Optional[str] = None,
-        week: Optional[str] = None,
-    ) -> None:
-        err = check_guild_and_channel(interaction, config)
-        if err:
-            await interaction.response.send_message(f"❌ {err}", ephemeral=True)
-            return
-
-        await interaction.response.defer()
-
-        all_matches = await excel_manager.get_all_matches()
-        if not all_matches:
-            await interaction.followup.send(
-                "📋 No matches recorded yet in the workbook to publish a gazette issue!",
-                ephemeral=True,
-            )
-            return
-
-        from ai_gazette import (
-            build_gazette_embed,
-            generate_gazette_edition,
-            generate_match_gazette,
-        )
-
-        query = (target or week or "").strip()
-        is_week_query = False
-        if query:
-            upper_q = query.upper()
-            if not upper_q.startswith("M-"):
-                if re.match(r"^\d{4}-W\d{1,2}$", upper_q) or upper_q.startswith("WEEK") or (upper_q.startswith("202") and len(upper_q) <= 8):
-                    is_week_query = True
-
-        if is_week_query:
-            edition = await generate_gazette_edition(
-                matches=all_matches,
-                week_key=query,
-                api_key=config.groq_api_key,
-                model=config.groq_vision_model,
-            )
-            embed = build_gazette_embed(edition)
-        else:
-            target_match: Optional[MatchRecord] = None
-            if query:
-                clean_id = query.upper()
-                target_match = next((m for m in all_matches if m.match_id.upper() == clean_id), None)
-                if not target_match:
-                    await interaction.followup.send(
-                        f"❌ Match **{query}** could not be found in the workbook.",
-                        ephemeral=True,
-                    )
-                    return
-            else:
-                target_match = all_matches[-1]
-
-            scoreline = format_match_scoreline(target_match)
-            edition = await generate_match_gazette(
-                target_match,
-                scoreline=scoreline,
-                api_key=config.groq_api_key,
-                model=config.groq_vision_model,
-            )
-            embed = build_gazette_embed(edition, match=target_match)
-
-        await interaction.followup.send(embed=embed)
-
     # 6. /teammates
     @tree.command(
         name="teammates",
@@ -2999,49 +2984,7 @@ def register_commands(
             )
             return
 
-        margin_lines = [format_match_scoreline(m) for m, _, _ in hof["biggest_margin_matches"][:3]]
-        total_lines = [format_match_scoreline(m) for m, _, _ in hof["highest_total_matches"][:3]]
-        clean_lines = [format_match_scoreline(m) for m, _, _ in reversed(hof["clean_sheets"])][:3]
-
-        sections = [
-            f"🔥 **Biggest Win Margin (+{hof['biggest_margin']} goals)**\n" + "\n".join(margin_lines),
-            f"🎯 **Highest-Scoring Match ({hof['highest_total']} total goals)**\n" + "\n".join(total_lines),
-            f"⚽ **Most Goals in One Match ({hof['max_single_goals']} goals)**\n"
-            + ", ".join(f"**{p}**" for p in hof["max_single_goals_players"]),
-            f"🅰️ **Most Assists in One Match ({hof['max_single_assists']} assists)**\n"
-            + ", ".join(f"**{p}**" for p in hof["max_single_assists_players"]),
-            f"🌟 **Most G/A in One Match ({hof['max_single_ga']} G/A)**\n"
-            + ", ".join(f"**{p}**" for p in hof["max_single_ga_players"]),
-        ]
-
-        if hof["best_win_streak"] > 0:
-            sections.append(
-                f"🚀 **Longest Win Streak ({hof['best_win_streak']} wins in a row)**\n"
-                + ", ".join(f"**{p}**" for p in hof["best_win_streak_players"])
-            )
-
-        if clean_lines:
-            sections.append(
-                f"🧤 **Clean Sheet Victories ({len(hof['clean_sheets'])} total)**\n" + "\n".join(clean_lines)
-            )
-
-        career_bits = []
-        if hof["top_scorer"]:
-            career_bits.append(f"Top Scorer: **{hof['top_scorer'].player}** ({hof['top_scorer'].goals}G)")
-        if hof["top_assister"]:
-            career_bits.append(f"Playmaker: **{hof['top_assister'].player}** ({hof['top_assister'].assists}A)")
-        if hof["hattrick_king"] and hof["hattrick_king"].hattricks > 0:
-            career_bits.append(f"Hattrick King: **{hof['hattrick_king'].player}** ({hof['hattrick_king'].hattricks})")
-        if career_bits:
-            sections.append("👑 **All-Time Legends**\n" + " · ".join(career_bits))
-
-        embed = discord.Embed(
-            title="🏛️ eFootball Co-op Hall of Fame",
-            description="\n\n".join(sections),
-            color=discord.Color.gold(),
-            timestamp=datetime.now(),
-        )
-        embed.set_footer(text=f"Computed across {hof['total_matches']} all-time matches")
+        embed = build_hall_of_fame_embed(hof)
         await interaction.followup.send(embed=embed)
 
     # 15. /card

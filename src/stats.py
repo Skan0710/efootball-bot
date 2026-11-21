@@ -1291,6 +1291,155 @@ def calculate_hall_of_fame(matches: List[MatchRecord]) -> dict:
     }
 
 
+def detect_hall_of_fame_overwrites(
+    matches_before: List[MatchRecord],
+    matches_after: List[MatchRecord],
+) -> List[str]:
+    """Detects if any all-time Hall of Fame record was broken or overwritten by new matches."""
+    if not matches_before:
+        return []
+
+    hof_before = calculate_hall_of_fame(matches_before)
+    hof_after = calculate_hall_of_fame(matches_after)
+    if not hof_before or not hof_after:
+        return []
+
+    new_entries: List[str] = []
+
+    # 1. Biggest Win Margin
+    bm_before = hof_before.get("biggest_margin", -1)
+    bm_after = hof_after.get("biggest_margin", -1)
+    if bm_after > bm_before and bm_after > 0:
+        new_entries.append(
+            f"🔥 **Biggest Win Margin**: New record of **+{bm_after} goals** (broken from +{bm_before})!"
+        )
+
+    # 2. Highest-Scoring Match
+    ht_before = hof_before.get("highest_total", -1)
+    ht_after = hof_after.get("highest_total", -1)
+    if ht_after > ht_before and ht_after > 0:
+        new_entries.append(
+            f"🎯 **Highest-Scoring Match**: New record of **{ht_after} total goals** (broken from {ht_before})!"
+        )
+
+    # 3. Most Goals in One Match
+    mg_before = hof_before.get("max_single_goals", -1)
+    mg_after = hof_after.get("max_single_goals", -1)
+    p_mg_before = hof_before.get("max_single_goals_players", [])
+    p_mg_after = hof_after.get("max_single_goals_players", [])
+    if mg_after > mg_before and mg_after > 0:
+        holders = ", ".join(f"**{p}**" for p in p_mg_after)
+        new_entries.append(
+            f"⚽ **Most Goals in One Match**: New record of **{mg_after} goals** set by {holders} (broken from {mg_before})!"
+        )
+    elif mg_after == mg_before and mg_after > 0:
+        new_holders = [
+            p for p in p_mg_after if p.lower() not in [bp.lower() for bp in p_mg_before]
+        ]
+        if new_holders:
+            holders = ", ".join(f"**{p}**" for p in new_holders)
+            new_entries.append(
+                f"⚽ **Most Goals in One Match**: {holders} joined the Hall of Fame with **{mg_after} goals**!"
+            )
+
+    # 4. Most Assists in One Match
+    ma_before = hof_before.get("max_single_assists", -1)
+    ma_after = hof_after.get("max_single_assists", -1)
+    p_ma_before = hof_before.get("max_single_assists_players", [])
+    p_ma_after = hof_after.get("max_single_assists_players", [])
+    if ma_after > ma_before and ma_after > 0:
+        holders = ", ".join(f"**{p}**" for p in p_ma_after)
+        new_entries.append(
+            f"🅰️ **Most Assists in One Match**: New record of **{ma_after} assists** set by {holders} (broken from {ma_before})!"
+        )
+    elif ma_after == ma_before and ma_after > 0:
+        new_holders = [
+            p for p in p_ma_after if p.lower() not in [bp.lower() for bp in p_ma_before]
+        ]
+        if new_holders:
+            holders = ", ".join(f"**{p}**" for p in new_holders)
+            new_entries.append(
+                f"🅰️ **Most Assists in One Match**: {holders} joined the Hall of Fame with **{ma_after} assists**!"
+            )
+
+    # 5. Most G/A in One Match
+    mga_before = hof_before.get("max_single_ga", -1)
+    mga_after = hof_after.get("max_single_ga", -1)
+    p_mga_before = hof_before.get("max_single_ga_players", [])
+    p_mga_after = hof_after.get("max_single_ga_players", [])
+    if mga_after > mga_before and mga_after > 0:
+        holders = ", ".join(f"**{p}**" for p in p_mga_after)
+        new_entries.append(
+            f"🌟 **Most G/A in One Match**: New record of **{mga_after} G/A** set by {holders} (broken from {mga_before})!"
+        )
+    elif mga_after == mga_before and mga_after > 0:
+        new_holders = [
+            p for p in p_mga_after if p.lower() not in [bp.lower() for bp in p_mga_before]
+        ]
+        if new_holders:
+            holders = ", ".join(f"**{p}**" for p in new_holders)
+            new_entries.append(
+                f"🌟 **Most G/A in One Match**: {holders} joined the Hall of Fame with **{mga_after} G/A**!"
+            )
+
+    # 6. Longest Win Streak
+    bws_before = hof_before.get("best_win_streak", 0)
+    bws_after = hof_after.get("best_win_streak", 0)
+    p_bws_before = hof_before.get("best_win_streak_players", [])
+    p_bws_after = hof_after.get("best_win_streak_players", [])
+    if bws_after > bws_before and bws_after >= 2:
+        holders = ", ".join(f"**{p}**" for p in p_bws_after)
+        new_entries.append(
+            f"🚀 **Longest Win Streak**: New record of **{bws_after} consecutive wins** set by {holders} (broken from {bws_before})!"
+        )
+    elif bws_after == bws_before and bws_after >= 2:
+        new_holders = [
+            p for p in p_bws_after if p.lower() not in [bp.lower() for bp in p_bws_before]
+        ]
+        if new_holders:
+            holders = ", ".join(f"**{p}**" for p in new_holders)
+            new_entries.append(
+                f"🚀 **Longest Win Streak**: {holders} matched the record streak of **{bws_after} consecutive wins**!"
+            )
+
+    # 7. All-Time Top Scorer Crown Overwritten
+    ts_before = hof_before.get("top_scorer")
+    ts_after = hof_after.get("top_scorer")
+    if ts_after and ts_before:
+        if ts_after.player.lower() != ts_before.player.lower():
+            new_entries.append(
+                f"👑 **All-Time Top Scorer Crown Overwritten**: **{ts_after.player}** takes the crown with **{ts_after.goals} goals** (overtaking **{ts_before.player}** with {ts_before.goals} goals)!"
+            )
+
+    # 8. All-Time Playmaker Crown Overwritten
+    ta_before = hof_before.get("top_assister")
+    ta_after = hof_after.get("top_assister")
+    if ta_after and ta_before:
+        if ta_after.player.lower() != ta_before.player.lower():
+            new_entries.append(
+                f"👑 **All-Time Playmaker Crown Overwritten**: **{ta_after.player}** takes the playmaker crown with **{ta_after.assists} assists** (overtaking **{ta_before.player}** with {ta_before.assists} assists)!"
+            )
+
+    # 9. All-Time Hattrick King
+    hk_before = hof_before.get("hattrick_king")
+    hk_after = hof_after.get("hattrick_king")
+    if hk_after and hk_after.hattricks > 0:
+        if not hk_before or hk_before.hattricks == 0:
+            new_entries.append(
+                f"🎩 **Hattrick King Crown**: **{hk_after.player}** claims the crown with **{hk_after.hattricks} hattrick(s)**!"
+            )
+        elif hk_after.player.lower() != hk_before.player.lower():
+            new_entries.append(
+                f"🎩 **Hattrick King Crown Overwritten**: **{hk_after.player}** takes the crown with **{hk_after.hattricks} hattricks** (overtaking **{hk_before.player}** with {hk_before.hattricks})!"
+            )
+        elif hk_after.hattricks > hk_before.hattricks:
+            new_entries.append(
+                f"🎩 **Hattrick King**: **{hk_after.player}** extends the all-time record to **{hk_after.hattricks} hattricks**!"
+            )
+
+    return new_entries
+
+
 def calculate_match_motm_and_milestones(
     saved_match: MatchRecord,
     all_matches: List[MatchRecord],
