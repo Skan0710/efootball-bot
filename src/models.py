@@ -17,10 +17,10 @@ PLAYER_CANONICAL_MAP: Dict[str, str] = {
     # Annie (AnnieSynx, annie)
     "annie": "Annie",
     "anniesynx": "Annie",
-    # Naka (Son, SoNaka, naka)
-    "son": "Naka",
-    "sonaka": "Naka",
-    "naka": "Naka",
+    # Son (Son, Naka, SoNaka, sonaka)
+    "son": "Son",
+    "sonaka": "Son",
+    "naka": "Son",
     # Suri (SuriBG, Suri, SuriBG6)
     "suri": "Suri",
     "suribg": "Suri",
@@ -88,7 +88,7 @@ def canonicalize_player_name(name: str) -> str:
     if clean.startswith("annie"):
         return "Annie"
     if clean == "son" or clean.startswith("sonaka") or clean.startswith("naka"):
-        return "Naka"
+        return "Son"
 
     return raw
 

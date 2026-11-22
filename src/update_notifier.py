@@ -107,6 +107,12 @@ def clean_commit_for_display(subject: str) -> str:
     return clean
 
 
+def is_silent_commit(subject: str) -> bool:
+    """Returns True if the commit is marked to be skipped from public Discord announcements."""
+    s = subject.lower()
+    return any(marker in s for marker in ["[silent]", "[no update]", "[no-update]", "[no announce]", "[no-announce]"])
+
+
 def get_pending_update_highlights(data_dir: Path) -> Optional[Tuple[str, List[str]]]:
     """Checks for custom update notes in data/pending_update.json if present."""
     p = data_dir / "pending_update.json"
@@ -191,6 +197,36 @@ async def check_and_announce_update(
         custom_title, highlights = pending
     else:
         custom_title = "🚀 New Update Dropped!"
+        # Check if the commits since last announcement are marked silent
+        raw_cmd = ["git", "log"]
+        if last_announced_commit:
+            raw_cmd.append(f"{last_announced_commit}..HEAD")
+        else:
+            raw_cmd.extend(["-4"])
+        raw_cmd.append("--pretty=format:%s")
+
+        try:
+            res = subprocess.run(
+                raw_cmd,
+                cwd=str(root_dir),
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=5,
+            )
+            raw_commits = [line.strip() for line in res.stdout.strip().splitlines() if line.strip()]
+        except Exception:
+            raw_commits = []
+
+        if raw_commits and any(is_silent_commit(c) for c in raw_commits):
+            LOGGER.info("Update commit is marked silent; advancing state without sending announcement message.")
+            state_file.parent.mkdir(parents=True, exist_ok=True)
+            state_file.write_text(
+                json.dumps({"last_announced_commit": current_commit}, indent=2),
+                encoding="utf-8",
+            )
+            return False
+
         commits = get_commit_messages_since(
             since_commit=last_announced_commit,
             max_count=4,

@@ -33,7 +33,7 @@ def sample_match() -> MatchRecord:
         player_stats=[
             PlayerStat(player="Lilly", goals=1, assists=2, result=MatchResult.HOME_WIN),
             PlayerStat(player="Annie", goals=2, assists=0, result=MatchResult.HOME_WIN),
-            PlayerStat(player="Naka", goals=0, assists=0, result=MatchResult.HOME_WIN),
+            PlayerStat(player="Son", goals=0, assists=0, result=MatchResult.HOME_WIN),
             PlayerStat(player="Skan", goals=0, assists=0, result=MatchResult.AWAY_WIN),
             PlayerStat(player="Jonny", goals=1, assists=1, result=MatchResult.AWAY_WIN),
             PlayerStat(player="Azlan", goals=1, assists=0, result=MatchResult.AWAY_WIN),

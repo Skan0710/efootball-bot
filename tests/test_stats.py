@@ -185,11 +185,12 @@ def test_player_name_canonicalization() -> None:
     assert canonicalize_player_name("annie") == "Annie"
     assert canonicalize_player_name("ANNIE") == "Annie"
 
-    # Naka
-    assert canonicalize_player_name("Son") == "Naka"
-    assert canonicalize_player_name("SoNaka") == "Naka"
-    assert canonicalize_player_name("sonaka") == "Naka"
-    assert canonicalize_player_name("Naka") == "Naka"
+    # Son
+    assert canonicalize_player_name("Son") == "Son"
+    assert canonicalize_player_name("SoNaka") == "Son"
+    assert canonicalize_player_name("sonaka") == "Son"
+    assert canonicalize_player_name("Naka") == "Son"
+    assert canonicalize_player_name("naka") == "Son"
 
     # Suri
     assert canonicalize_player_name("SuriBG") == "Suri"
@@ -273,13 +274,15 @@ def test_multiple_aliases_merged_into_single_player_record() -> None:
     assert skan_rec.goals == 5
     assert skan_rec.assists == 2
 
-    # All Naka variants merged into "Naka"
-    naka_rec = get_player_record("Naka", aggregates)
-    assert naka_rec is not None
-    assert naka_rec.player == "Naka"
-    assert naka_rec.matches_played == 2
-    assert naka_rec.goals == 2
-    assert naka_rec.assists == 2
+    # All Son/Naka variants merged into "Son"
+    son_rec = get_player_record("Son", aggregates)
+    assert son_rec is not None
+    assert son_rec.player == "Son"
+    assert son_rec.matches_played == 2
+    assert son_rec.goals == 2
+    assert son_rec.assists == 2
+    assert get_player_record("Naka", aggregates) == son_rec
+    assert get_player_record("SoNaka", aggregates) == son_rec
 
     # All Azlan variants merged into "Azlan"
     azlan_rec = get_player_record("Azlan", aggregates)

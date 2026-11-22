@@ -17,6 +17,7 @@ from update_notifier import (
     get_commit_messages_since,
     get_current_git_commit,
     get_pending_update_highlights,
+    is_silent_commit,
 )
 
 
@@ -26,6 +27,14 @@ def test_clean_commit_for_display() -> None:
     assert clean_commit_for_display("fix(ocr): resolve score parsing bug") == "Resolve score parsing bug"
     assert clean_commit_for_display("Revamp 6 face attributes") == "Revamp 6 face attributes"
     assert clean_commit_for_display("") == ""
+
+
+def test_is_silent_commit() -> None:
+    """Verifies silent commit markers detection."""
+    assert is_silent_commit("[silent] rename Naka to Son") is True
+    assert is_silent_commit("rename Naka to Son [no-announce]") is True
+    assert is_silent_commit("feat: [no update] internal refactor") is True
+    assert is_silent_commit("feat: update card progression") is False
 
 
 def test_format_update_message() -> None:
