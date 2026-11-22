@@ -809,18 +809,19 @@ def compute_player_card_ovr(
             wr = float(record.win_rate)
             def_stat = getattr(record, "defending", None)
 
-        raw_r = compute_player_rating(record)
-        pace = int(max(71, min(99, round(70.0 + (raw_r / 100.0) * 28.0))))
-        goal_ratio = (goals / (goals + assists)) if (goals + assists) > 0 else 0.5
-        assist_ratio = (assists / (goals + assists)) if (goals + assists) > 0 else 0.5
-        shooting = int(max(60, min(99, round(58.0 + min(goals * 1.0, 20.0) + gpg * 6.5 + goal_ratio * 7.0))))
-        passing = int(max(60, min(99, round(58.0 + min(assists * 1.1, 20.0) + apg * 7.5 + assist_ratio * 8.0))))
-        dribbling = int(max(60, min(99, round(60.0 + gapg * 11.5))))
+        pace = int(max(60, min(99, round(73.0 + gapg * 6.5 + (wr / 100.0) * 10.0))))
+        shooting = int(max(60, min(99, round(64.0 + min(goals * 0.36, 18.0) + gpg * 8.5))))
+        passing = int(max(60, min(99, round(65.0 + min(assists * 0.46, 16.0) + apg * 11.0))))
+        dual_threat = min(gpg, 1.0) * min(apg, 0.8) * 6.0
+        dribbling = int(max(60, min(99, round(68.0 + gapg * 7.0 + dual_threat))))
         if def_stat is not None:
             defending = int(def_stat)
         else:
-            defending = int(max(60, min(90, round(62.0 + (wr / 100.0) * 18.0 + min(goals, 10) * 0.5))))
-        physical = int(max(60, min(99, round((defending + pace + dribbling) / 3.0))))
+            raw_def = int(max(60, min(90, round(62.0 + (wr / 100.0) * 18.0 + min(goals, 10) * 0.5))))
+            defending = max(raw_def, 68) if mp >= 5 else raw_def
+        stamina = min(mp / 30.0, 1.0) * 8.0
+        def_resilience = 7.0 if defending >= 75 else 4.0
+        physical = int(max(60, min(99, round(68.0 + stamina + def_resilience + (wr / 100.0) * 6.0))))
 
         s_sorted = sorted([pace, shooting, passing, dribbling, defending, physical], reverse=True)
         top3_mean = sum(s_sorted[:3]) / 3.0
@@ -1689,6 +1690,8 @@ def compute_player_defending_stat(
     baseline_def = 0.45
     damped_def = ((mp / (mp + def_damping_k)) * raw_def) + ((def_damping_k / (mp + def_damping_k)) * baseline_def)
     defending = int(max(60, min(99, round(60.0 + 39.0 * damped_def))))
+    if mp >= 5:
+        defending = max(defending, 68)
 
     return defending, goals_conceded, clean_sheets
 
@@ -1973,21 +1976,20 @@ def calculate_player_card_stats(
         wins = int(round((win_rate / 100.0) * mp))
     clean_sheets = int(record.get("clean_sheets", 0))
 
-    raw_r = compute_player_rating(record)
-    pace = int(max(71, min(99, round(70.0 + (raw_r / 100.0) * 28.0))))
+    # 1. Pace: Counter transition speed driven by goal contribution frequency and win rate
+    pace = int(max(60, min(99, round(73.0 + gapg * 6.5 + (win_rate / 100.0) * 10.0))))
 
-    # Realistic Shooting: Driven by goals, GPG, and goal conversion ratio
-    goal_ratio = (goals / (goals + assists)) if (goals + assists) > 0 else 0.5
-    shooting = int(max(60, min(99, round(58.0 + min(goals * 1.0, 20.0) + gpg * 6.5 + goal_ratio * 7.0))))
+    # 2. Shooting: Milestone volume up to 50 goals + GPG rate (no assist penalty)
+    shooting = int(max(60, min(99, round(64.0 + min(goals * 0.36, 18.0) + gpg * 8.5))))
 
-    # Realistic Passing: Driven by assists, APG, and assist-to-total ratio (pure playmakers get high passing)
-    assist_ratio = (assists / (goals + assists)) if (goals + assists) > 0 else 0.5
-    passing = int(max(60, min(99, round(58.0 + min(assists * 1.1, 20.0) + apg * 7.5 + assist_ratio * 8.0))))
+    # 3. Passing: Progressive assist volume up to 35 assists + APG rate
+    passing = int(max(60, min(99, round(65.0 + min(assists * 0.46, 16.0) + apg * 11.0))))
 
-    dribbling = int(max(60, min(99, round(60.0 + gapg * 11.5))))
+    # 4. Dribbling: Base 68 + GAPG rate + Dual-threat synergy bonus
+    dual_threat = min(gpg, 1.0) * min(apg, 0.8) * 6.0
+    dribbling = int(max(60, min(99, round(68.0 + gapg * 7.0 + dual_threat))))
 
-    # Realistic Defending: Pure Hybrid (1, 2)
-    # 50% Calibrated Co-op Benchmarks + 50% Server Group Relative Percentile
+    # 5. Defending: Pure Hybrid (Goals Conceded + Clean Sheets) with respectful squad floor
     cs_map = calculate_player_conceded_and_clean_sheets(matches)
     defending, goals_conceded, clean_sheets = compute_player_defending_stat(
         canonical=canonical,
@@ -1997,13 +1999,16 @@ def calculate_player_card_stats(
         cs_map=cs_map,
     )
 
+    # 6. Physical: Career match stamina + defensive resilience + winning grit
+    stamina = min(mp / 30.0, 1.0) * 8.0
+    def_resilience = 7.0 if defending >= 75 else 4.0
+    physical = int(max(60, min(99, round(68.0 + stamina + def_resilience + (win_rate / 100.0) * 6.0))))
+
     # Dynamic Dual-Anchor OVR: 50% Top-3 Mean + 50% All-6 Mean with Rookie Confidence Shield
-    prelim_phy = int(max(60, min(99, round((defending + pace + dribbling) / 3.0))))
     rating = compute_player_card_ovr(
         record,
-        attributes=[pace, shooting, passing, dribbling, defending, prelim_phy],
+        attributes=[pace, shooting, passing, dribbling, defending, physical],
     )
-    physical = int(max(60, min(99, round((rating + pace + dribbling) / 3.0))))
 
     # Position Assignment: Use roster-wide tactical positioning or individual fallback
     positions_map = assign_roster_positions(leaderboard_records, matches) if leaderboard_records else {}
