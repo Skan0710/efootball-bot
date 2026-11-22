@@ -33,6 +33,8 @@ class BotConfig:
     groq_api_key: Optional[str] = None
     groq_api_key_secondary: Optional[str] = None
     groq_vision_model: str = "qwen/qwen3.8-27b"
+    update_channel_id: int = 1525228800999428268
+    update_role_id: int = 1525397453770063874
 
     @property
     def groq_api_keys(self) -> List[str]:
@@ -151,6 +153,10 @@ def load_config(env_path: Optional[str | Path] = None, require_token: bool = Tru
         or None
     )
     groq_vision_model = os.getenv("GROQ_VISION_MODEL", "qwen/qwen3.8-27b").strip() or "qwen/qwen3.8-27b"
+    update_channel_raw = os.getenv("UPDATE_CHANNEL_ID", "1525228800999428268").strip()
+    update_channel_id = int(update_channel_raw) if update_channel_raw.isdigit() else 1525228800999428268
+    update_role_raw = os.getenv("UPDATE_ROLE_ID", "1525397453770063874").strip()
+    update_role_id = int(update_role_raw) if update_role_raw.isdigit() else 1525397453770063874
 
     return BotConfig(
         discord_token=token,
@@ -165,4 +171,6 @@ def load_config(env_path: Optional[str | Path] = None, require_token: bool = Tru
         groq_api_key=groq_api_key,
         groq_api_key_secondary=groq_api_key_secondary,
         groq_vision_model=groq_vision_model,
+        update_channel_id=update_channel_id,
+        update_role_id=update_role_id,
     )
