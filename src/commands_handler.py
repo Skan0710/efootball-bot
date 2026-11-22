@@ -262,6 +262,105 @@ def build_latest_match_embed(
     return embed
 
 
+HELP_CATEGORIES = {
+    "logging": {
+        "title": "📸 Match Logging & Management",
+        "description": (
+            "• `/add-match-image` — Submit screenshot(s) for automatic OCR score & player stats extraction.\n"
+            "• `/add-match-text` — Add match data and player statistics directly via manual text input.\n"
+            "• `/edit-match` — Edit an existing match's scores, players, goals, assists, or outcome.\n"
+            "• `/delete-match` — Permanently delete a specific match record by ID.\n"
+            "• `/delete-latest` — Permanently delete the latest recorded match (Admin password required).\n"
+            "• `/delete-all` — Wipe all matches and statistics from the workbook (Admin password required)."
+        ),
+    },
+    "matches": {
+        "title": "📜 Matches & Matchday Analysis",
+        "description": (
+            "• `/matches [limit]` — View recent co-op match history and match IDs.\n"
+            "• `/latest-match` — View detailed lineup, scoreline, and player contributions for the latest match.\n"
+            "• `/highlights <match_id>` — Show full statistics, lineups, and match MVP for a specified match ID.\n"
+            "• `/recap` — View a comprehensive recap of today's matches, session MVP, and performance trends.\n"
+            "• `/pundit [match_id]` — AI commentary desk review (Drury praise, Keane roast & banter)."
+        ),
+    },
+    "players": {
+        "title": "👤 Player Profiles & Chemistry",
+        "description": (
+            "• `/record <player>` — View career statistics, win rates, clean sheets, and averages.\n"
+            "• `/individual-record <player>` — List every match played by a player with their goal contributions & match IDs.\n"
+            "• `/card <player>` — Generate an FC 27-style FUT player card image with realistic OVR and face stats.\n"
+            "• `/form <player>` — Check recent 5-match form rating, streaks, and match-by-match trajectory.\n"
+            "• `/trophies <player>` — View unlockable achievements, career milestones, and badges.\n"
+            "• `/chemistry <player>` — Find player's best partner, cursed duo, kryptonite, and favorite opponent.\n"
+            "• `/duo-card <p1> <p2>` — Generate an EA FC Dynamic Duo dual card showcasing partner synergy.\n"
+            "• `/compare <p1> <p2>` — Side-by-side career statistics comparison of two players.\n"
+            "• `/h2h <p1> <p2>` — Head-to-head rivalry comparison and duo partnership record.\n"
+            "• `/rivalry <p1> <p2>` — Grudge match record when two players clashed on opposing teams."
+        ),
+    },
+    "leaderboards": {
+        "title": "🏆 Leaderboards & Accolades",
+        "description": (
+            "• `/leaderboard [stat]` — Group rankings for goals, assists, G/A, wins, clean sheets, and rating.\n"
+            "• `/leaders` — Snapshot of the #1 ranked player in every statistical category.\n"
+            "• `/tierlist` — Visual tier list (S/A/B/C) ranking all server players.\n"
+            "• `/hall-of-fame` — All-time club records, biggest wins, and single-match records.\n"
+            "• `/potw` — Show Player of the Week ranking and form (Mon–Sun).\n"
+            "• `/potm` — Show Player of the Month ranking and form.\n"
+            "• `/best-team` — Teammate duo partnerships ranked by most co-op wins together.\n"
+            "• `/best-team-leader` — Captains & Team Leaders leaderboard ranked by wins.\n"
+            "• `/captain-h2h` — Managerial rivalry stats between two team captains.\n"
+            "• `/teammates` — List all registered teammates and their aggregate totals."
+        ),
+    },
+    "tactics": {
+        "title": "⚽ Tactics & Predictions",
+        "description": (
+            "• `/fair-teams` — Split 4, 5, or 6 players into mathematically balanced co-op teams.\n"
+            "• `/squad` — Starting lineup and tactical pitch view of the co-op squad.\n"
+            "• `/totw` — Team of the Week tactical pitch lineup.\n"
+            "• `/predict` — Predict the outcome and exact score of the upcoming match.\n"
+            "• `/predictions-leaderboard` — View matchday predictions leaderboard standings."
+        ),
+    },
+    "utility": {
+        "title": "⚙️ Utilities & Admin",
+        "description": (
+            "• `/help [category]` — Display this comprehensive command directory and guide.\n"
+            "• `/say [message] [reply_to]` — Send a message in the channel as the bot (Admin only)."
+        ),
+    },
+}
+
+
+def build_help_embed(category: str = "all") -> discord.Embed:
+    """Builds a rich guide embed for bot slash commands."""
+    cat_key = (category or "all").lower().strip()
+    embed = discord.Embed(
+        title="📖 eFootball Bot — Command Directory",
+        color=discord.Color.gold(),
+        timestamp=datetime.now(),
+    )
+
+    if cat_key in HELP_CATEGORIES:
+        info = HELP_CATEGORIES[cat_key]
+        embed.description = f"### {info['title']}\nHere are the commands available in this section:"
+        embed.add_field(name="Commands & Descriptions", value=info["description"], inline=False)
+        embed.set_footer(text="Tip: Use `/help category:all` to view the full command directory.")
+        return embed
+
+    embed.description = (
+        "Welcome to the **eFootball Co-op Bot**! Below is an overview of all available slash commands.\n"
+        "Use `/help category:<category>` to focus on a specific section."
+    )
+    for cat, info in HELP_CATEGORIES.items():
+        embed.add_field(name=info["title"], value=info["description"], inline=False)
+
+    embed.set_footer(text="eFootball Bot • Complete Command Directory • Built for competitive co-op tracking")
+    return embed
+
+
 def build_preview_embed(
     candidates: List[OCRPlayerCandidate],
     result: MatchResult,
@@ -3720,3 +3819,28 @@ def register_commands(
         target_channel = interaction.channel or target_message.channel
         modal = SayModal(target_channel=target_channel, default_reply_to=str(target_message.id))
         await interaction.response.send_modal(modal)
+
+    # 19. /help
+    @tree.command(
+        name="help",
+        description="Display a complete list of all bot commands and what each command does.",
+    )
+    @app_commands.describe(category="Filter commands by category (matches, players, leaderboards, tactics, etc.)")
+    @app_commands.choices(category=[
+        app_commands.Choice(name="All Commands (Overview)", value="all"),
+        app_commands.Choice(name="📸 Match Logging & Management", value="logging"),
+        app_commands.Choice(name="📜 Matches & Matchday Analysis", value="matches"),
+        app_commands.Choice(name="👤 Player Profiles & Chemistry", value="players"),
+        app_commands.Choice(name="🏆 Leaderboards & Accolades", value="leaderboards"),
+        app_commands.Choice(name="⚽ Tactics & Predictions", value="tactics"),
+        app_commands.Choice(name="⚙️ Utilities & Admin", value="utility"),
+    ])
+    async def help_cmd(interaction: discord.Interaction, category: Optional[str] = "all") -> None:
+        err = check_guild_and_channel(interaction, config)
+        if err:
+            await interaction.response.send_message(f"❌ {err}", ephemeral=True)
+            return
+
+        cat_key = (category or "all").lower().strip()
+        embed = build_help_embed(cat_key)
+        await interaction.response.send_message(embed=embed)

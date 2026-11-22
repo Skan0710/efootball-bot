@@ -11,6 +11,7 @@ from bot import EFootballBot
 from commands_handler import (
     EditStatsModal,
     MatchPreviewView,
+    build_help_embed,
     check_guild_and_channel,
     is_user_admin,
     register_commands,
@@ -74,6 +75,7 @@ def test_command_registration_names(test_config: BotConfig, tmp_path: Path) -> N
         "predict",
         "predictions-leaderboard",
         "say",
+        "help",
         "Reply as Bot",
     }
     assert registered_names == expected_commands
@@ -1648,6 +1650,29 @@ async def test_add_match_roster_filter_minimum_and_equal_teams(tmp_path: Path) -
     saved = await em.get_all_matches()
     assert len(saved) == 1
     assert len(saved[0].player_stats) == 4
+
+
+def test_build_help_embed_overview_and_categories() -> None:
+    """Verifies that the help embed generates correctly for all categories and specific filters."""
+    # Overview (all)
+    embed_all = build_help_embed("all")
+    assert "Command Directory" in embed_all.title
+    assert len(embed_all.fields) >= 5
+    # Check that major categories exist
+    field_names = [f.name for f in embed_all.fields]
+    assert any("Match Logging" in name for name in field_names)
+    assert any("Matches" in name for name in field_names)
+    assert any("Player Profiles" in name for name in field_names)
+    assert any("Leaderboards" in name for name in field_names)
+
+    # Filtered by category
+    embed_players = build_help_embed("players")
+    assert "Player Profiles" in embed_players.description
+    assert len(embed_players.fields) == 1
+    assert "/record" in embed_players.fields[0].value
+    assert "/card" in embed_players.fields[0].value
+    assert "/chemistry" in embed_players.fields[0].value
+
 
 
 
