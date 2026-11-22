@@ -12,6 +12,7 @@ from commands_handler import (
     EditStatsModal,
     MatchPreviewView,
     build_help_embed,
+    build_individual_record_embed,
     check_guild_and_channel,
     is_user_admin,
     register_commands,
@@ -76,6 +77,7 @@ def test_command_registration_names(test_config: BotConfig, tmp_path: Path) -> N
         "predictions-leaderboard",
         "say",
         "help",
+        "individual-record",
         "Reply as Bot",
     }
     assert registered_names == expected_commands
@@ -1672,6 +1674,41 @@ def test_build_help_embed_overview_and_categories() -> None:
     assert "/record" in embed_players.fields[0].value
     assert "/card" in embed_players.fields[0].value
     assert "/chemistry" in embed_players.fields[0].value
+
+
+def test_build_individual_record_embed() -> None:
+    """Verifies that the individual record embed displays matches, match IDs, and goal contributions."""
+    m1 = MatchRecord(
+        match_id="M-20261120-01",
+        date="2026-11-20 14:00:00",
+        result=MatchResult.WIN,
+        submitted_by="AdminUser",
+        notes="Score: 3 - 1 (Win)",
+        player_stats=[PlayerStat(player="Son", goals=2, assists=1, result=MatchResult.WIN)],
+    )
+    m2 = MatchRecord(
+        match_id="M-20261121-02",
+        date="2026-11-21 16:30:00",
+        result=MatchResult.LOSS,
+        submitted_by="AdminUser",
+        notes="Score: 1 - 2 (Loss)",
+        player_stats=[PlayerStat(player="Son", goals=0, assists=1, result=MatchResult.LOSS)],
+    )
+
+    player_matches = [(m1, m1.player_stats[0]), (m2, m2.player_stats[0])]
+    embed = build_individual_record_embed("Son", player_matches)
+
+    assert "Individual Match Record — Son" in embed.title
+    assert "Matches Played:** 2" in embed.description
+    assert "Goals:** 2" in embed.description
+    assert "Assists:** 2" in embed.description
+    assert "Total G/A:** 4" in embed.description
+    assert len(embed.fields) >= 1
+    val = embed.fields[0].value
+    assert "M-20261120-01" in val
+    assert "M-20261121-02" in val
+    assert "2**G | 🎯 **1**A" in val
+
 
 
 

@@ -361,6 +361,63 @@ def build_help_embed(category: str = "all") -> discord.Embed:
     return embed
 
 
+def build_individual_record_embed(
+    player: str,
+    player_matches: List[Tuple[MatchRecord, PlayerStat]],
+) -> discord.Embed:
+    """Builds a comprehensive individual match history embed showing goal contributions and match IDs."""
+    total_matches = len(player_matches)
+    total_goals = sum(p.goals for _, p in player_matches)
+    total_assists = sum(p.assists for _, p in player_matches)
+    total_ga = total_goals + total_assists
+    wins = sum(1 for _, p in player_matches if p.result in (MatchResult.WIN, MatchResult.HOME_WIN))
+    losses = sum(1 for _, p in player_matches if p.result in (MatchResult.LOSS, MatchResult.AWAY_WIN))
+    draws = sum(1 for _, p in player_matches if p.result == MatchResult.DRAW)
+    win_rate = (wins / total_matches * 100.0) if total_matches > 0 else 0.0
+
+    embed = discord.Embed(
+        title=f"📋 Individual Match Record — {player}",
+        description=(
+            f"**Career Summary:**\n"
+            f"🎮 **Matches Played:** {total_matches} | ⚽ **Goals:** {total_goals} | 🎯 **Assists:** {total_assists}\n"
+            f"🌟 **Total G/A:** {total_ga} ({(total_ga / total_matches):.2f}/game)\n"
+            f"🏆 **Record:** {wins}W - {draws}D - {losses}L (**{win_rate:.1f}%** Win Rate)"
+        ),
+        color=discord.Color.blue(),
+        timestamp=datetime.now(),
+    )
+
+    # Format match lines (newest first)
+    chronological = list(reversed(player_matches))
+    display_matches = chronological[:20]
+
+    lines = []
+    for match, stat in display_matches:
+        outcome_icon = "🟢" if stat.result in (MatchResult.WIN, MatchResult.HOME_WIN) else (
+            "🔴" if stat.result in (MatchResult.LOSS, MatchResult.AWAY_WIN) else "🟡"
+        )
+        date_str = match.date[:10] if match.date else "N/A"
+        scoreline = format_match_scoreline(match)
+        line = (
+            f"{outcome_icon} **`{match.match_id}`** ({date_str}) — {scoreline}\n"
+            f"   ⚽ **{stat.goals}**G | 🎯 **{stat.assists}**A | 🌟 **{stat.goals + stat.assists}** G/A ({stat.result.value})"
+        )
+        lines.append(line)
+
+    chunk_size = 5
+    for i in range(0, len(lines), chunk_size):
+        chunk = lines[i : i + chunk_size]
+        field_name = f"Matches {i + 1} – {i + len(chunk)}" if len(lines) > chunk_size else "Match History & Goal Contributions"
+        embed.add_field(name=field_name, value="\n".join(chunk), inline=False)
+
+    if total_matches > 20:
+        embed.set_footer(text=f"Showing latest 20 of {total_matches} total matches • eFootball Bot")
+    else:
+        embed.set_footer(text=f"Showing all {total_matches} matches • eFootball Bot")
+
+    return embed
+
+
 def build_preview_embed(
     candidates: List[OCRPlayerCandidate],
     result: MatchResult,
@@ -3843,4 +3900,45 @@ def register_commands(
 
         cat_key = (category or "all").lower().strip()
         embed = build_help_embed(cat_key)
+        await interaction.response.send_message(embed=embed)
+
+    # 20. /individual-record
+    @tree.command(
+        name="individual-record",
+        description="View all matches played by a player along with their goal contributions and match IDs.",
+    )
+    @app_commands.describe(player="Select player from list")
+    @app_commands.autocomplete(player=player_autocomplete)
+    async def individual_record(interaction: discord.Interaction, player: str) -> None:
+        err = check_guild_and_channel(interaction, config)
+        if err:
+            await interaction.response.send_message(f"❌ {err}", ephemeral=True)
+            return
+
+        all_matches = await excel_manager.get_all_matches()
+        if not all_matches:
+            await interaction.response.send_message(
+                "📋 No matches recorded yet in the workbook. Submit your first screenshot with `/add-match-image`!",
+                ephemeral=True,
+            )
+            return
+
+        canonical_name = canonicalize_player_name(player)
+
+        # Filter all matches where this player participated
+        player_matches: List[Tuple[MatchRecord, PlayerStat]] = []
+        for m in all_matches:
+            for p in m.player_stats:
+                if p.player.lower() == canonical_name.lower() or p.player.lower() == player.lower().strip():
+                    player_matches.append((m, p))
+                    break
+
+        if not player_matches:
+            await interaction.response.send_message(
+                f"❌ No matches found for player **{canonical_name}** ({player}). Use `/teammates` to see registered players.",
+                ephemeral=True,
+            )
+            return
+
+        embed = build_individual_record_embed(canonical_name, player_matches)
         await interaction.response.send_message(embed=embed)
