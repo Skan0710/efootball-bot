@@ -2093,12 +2093,18 @@ def calculate_special_card_stats(
 
     clean_type = card_type.strip().upper()
     if clean_type == "POTM":
-        # Guaranteed 95+ OVR buff
-        target_ovr = max(95, min(99, base_ovr + max(10, 95 - base_ovr)))
+        # Guaranteed 95+ OVR buff (scaled realistically for high base OVRs)
+        if base_ovr < 95:
+            target_ovr = max(95, min(99, base_ovr + max(5, 95 - base_ovr)))
+        else:
+            target_ovr = min(99, base_ovr + 2)
         tier_label = "PLAYER OF THE MONTH"
     else:
-        # Guaranteed 90+ OVR buff for TOTW
-        target_ovr = max(90, min(99, base_ovr + max(8, 90 - base_ovr)))
+        # Guaranteed 90+ OVR buff for TOTW (scaled realistically for high base OVRs)
+        if base_ovr < 90:
+            target_ovr = max(90, min(99, base_ovr + max(3, 90 - base_ovr)))
+        else:
+            target_ovr = min(99, base_ovr + 2)
         tier_label = "TEAM OF THE WEEK"
 
     delta = max(0, target_ovr - base_ovr)
