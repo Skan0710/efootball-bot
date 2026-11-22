@@ -136,8 +136,9 @@ def test_isolated_position_rules() -> None:
     # Harold
     assert _assign_individual_position("Harold", 99, 99, 99, 99, 99) == "GK"
 
-    # Gullit Gang rule: all 6 attributes >= 80 -> CM by default
+    # Gullit Gang rule: all 6 attributes >= 80 -> CM by default (unless lethal striker)
     assert _assign_individual_position("GullitGuy", 88, 85, 84, 86, 82, physical=85) == "CM"
+    assert _assign_individual_position("LethalStriker", 93, 94, 80, 87, 86, physical=87) == "ST"
 
     # 3 stats: Pace >= 75, DRI >= 75, DEF >= 75 and DEF >= SHO -> Fullback (LB)
     assert _assign_individual_position("DefWing", 84, 70, 70, 80, 85) == "LB"

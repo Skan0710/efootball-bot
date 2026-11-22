@@ -1572,8 +1572,11 @@ def _assign_individual_position(
     phy = physical if physical is not None else int(round((pace + dribbling + 75) / 3.0))
 
     # Gullit Gang rule: All 6 face attributes >= 80 -> CM by default
+    # If shooting is strictly dominant over passing and defending (e.g. Skan 94 SHO vs 80 PAS) -> ST
     stats_list = [pace, shooting, passing, dribbling, defending, phy]
     if all(s >= 80 for s in stats_list):
+        if shooting == max(stats_list) and shooting >= passing + 8:
+            return "ST"
         return "CM"
 
     is_midfield = passing >= shooting and passing >= defending
@@ -1759,13 +1762,12 @@ def assign_roster_positions(
             wins = int(round((win_rate / 100.0) * mp))
         clean_sheets = int(r.get("clean_sheets", 0))
 
-        rating = compute_player_card_ovr(r)
-        pace = int(max(71, min(99, round(71.0 + (rating - 60) * (28.0 / 39.0)))))
-        goal_ratio = (goals / (goals + assists)) if (goals + assists) > 0 else 0.5
-        shooting = int(max(60, min(99, round(58.0 + min(goals * 1.0, 20.0) + gpg * 6.5 + goal_ratio * 7.0))))
-        assist_ratio = (assists / (goals + assists)) if (goals + assists) > 0 else 0.5
-        passing = int(max(60, min(99, round(58.0 + min(assists * 1.1, 20.0) + apg * 7.5 + assist_ratio * 8.0))))
-        dribbling = int(max(60, min(99, round(60.0 + gapg * 11.5))))
+        # Synchronize face attributes with calculate_player_card_stats
+        pace = int(max(60, min(99, round(73.0 + gapg * 6.5 + (win_rate / 100.0) * 10.0))))
+        shooting = int(max(60, min(99, round(64.0 + min(goals * 0.36, 18.0) + gpg * 8.5))))
+        passing = int(max(60, min(99, round(65.0 + min(assists * 0.46, 16.0) + apg * 11.0))))
+        dual_threat = min(gpg, 1.0) * min(apg, 0.8) * 6.0
+        dribbling = int(max(60, min(99, round(68.0 + gapg * 7.0 + dual_threat))))
 
         defending, goals_conceded, clean_sheets = compute_player_defending_stat(
             canonical=canonical,
@@ -1774,7 +1776,15 @@ def assign_roster_positions(
             all_records=leaderboard_records,
             cs_map=cs_map,
         )
-        physical = int(max(60, min(99, round((rating + pace + dribbling) / 3.0))))
+
+        stamina = min(mp / 30.0, 1.0) * 8.0
+        def_resilience = 7.0 if defending >= 75 else 4.0
+        physical = int(max(60, min(99, round(68.0 + stamina + def_resilience + (win_rate / 100.0) * 6.0))))
+
+        rating = compute_player_card_ovr(
+            r,
+            attributes=[pace, shooting, passing, dribbling, defending, physical],
+        )
 
         raw_players.append({
             "key": key,
@@ -1798,49 +1808,29 @@ def assign_roster_positions(
             positions[p["key"]] = "GK"
             assigned.add(p["key"])
 
-    # 2. Fullbacks (LB / RB)
-    fb_candidates = [
-        p for p in raw_players
-        if p["key"] not in assigned
-        and p["pace"] >= 75 and p["dribbling"] >= 75 and p["defending"] >= 75
-        and p["defending"] >= p["shooting"]
-    ]
-    fb_candidates.sort(key=lambda p: (p["defending"], p["pace"] + p["dribbling"]), reverse=True)
-
-    has_both_fb = len(fb_candidates) >= 2
-    if has_both_fb:
-        positions[fb_candidates[0]["key"]] = "LB"
-        assigned.add(fb_candidates[0]["key"])
-        positions[fb_candidates[1]["key"]] = "RB"
-        assigned.add(fb_candidates[1]["key"])
-        required_cbs = 2
-    else:
-        # If no LB and RB, then 3 CBs are must
-        required_cbs = 3
-
-    # 3. Center Backs (CB) - Guaranteed defensive quota (at least 3-4 defenders total)
-    cb_pool = [p for p in raw_players if p["key"] not in assigned]
-    cb_pool.sort(
-        key=lambda p: (
-            p["defending"] >= p["shooting"],
-            p["defending"] * 1.2 + p["physical"] * 0.8 + (p["defending"] - p["shooting"]) * 0.5,
-        ),
-        reverse=True,
-    )
-    for p in cb_pool[:required_cbs]:
-        positions[p["key"]] = "CB"
-        assigned.add(p["key"])
-
-    # 4. Gullit Gang: All 6 face attributes >= 80 -> CM by default
+    # 2. Gullit Gang: All 6 face attributes >= 80 -> CM by default
+    # If shooting is strictly dominant over passing and defending (e.g. Skan 94 SHO vs 80 PAS) -> ST
     for p in raw_players:
         if p["key"] in assigned:
             continue
         stats_list = [p["pace"], p["shooting"], p["passing"], p["dribbling"], p["defending"], p["physical"]]
         if all(s >= 80 for s in stats_list):
-            positions[p["key"]] = "CM"
+            if p["shooting"] == max(stats_list) and p["shooting"] >= p["passing"] + 8:
+                positions[p["key"]] = "ST"
+            else:
+                positions[p["key"]] = "CM"
             assigned.add(p["key"])
 
-    # 5. Wingers (LW / RW) - Exactly max 1 LW and 1 RW across the roster
+    # 3. Dedicated Playmaker Rule (Passing is standout skill, PAS >= 85 and DRI >= 80, e.g. Annie) -> CAM
+    for p in sorted(raw_players, key=lambda x: (x["passing"], x["dribbling"]), reverse=True):
+        if p["key"] in assigned:
+            continue
+        if p["passing"] >= 85 and p["passing"] > p["shooting"] and p["passing"] > p["defending"]:
+            positions[p["key"]] = "CAM"
+            assigned.add(p["key"])
+            break
+
+    # 4. Wingers (LW / RW) - Exactly max 1 LW and 1 RW across the roster
     w_candidates = [
         p for p in raw_players
         if p["key"] not in assigned
@@ -1855,8 +1845,41 @@ def assign_roster_positions(
         positions[w_candidates[1]["key"]] = "RW"
         assigned.add(w_candidates[1]["key"])
 
+    # 5. Fullbacks (LB / RB) - At most 1 LB and 1 RB across the roster
+    fb_candidates = [
+        p for p in raw_players
+        if p["key"] not in assigned
+        and p["pace"] >= 75 and p["dribbling"] >= 75 and p["defending"] >= 75
+        and p["defending"] >= p["shooting"] and p["defending"] >= p["passing"]
+    ]
+    fb_candidates.sort(key=lambda p: (p["defending"], p["pace"] + p["dribbling"]), reverse=True)
+
+    has_both_fb = len(fb_candidates) >= 2
+    if has_both_fb:
+        positions[fb_candidates[0]["key"]] = "LB"
+        assigned.add(fb_candidates[0]["key"])
+        positions[fb_candidates[1]["key"]] = "RB"
+        assigned.add(fb_candidates[1]["key"])
+        required_cbs = 2
+    else:
+        # If no LB and RB, then 3 CBs are must
+        required_cbs = 3
+
+    # 6. Center Backs (CB) - Guaranteed defensive quota (at least 3-4 defenders total)
+    cb_pool = [p for p in raw_players if p["key"] not in assigned]
+    cb_pool.sort(
+        key=lambda p: (
+            p["defending"] >= p["shooting"],
+            p["defending"] * 1.2 + p["physical"] * 0.8 + (p["defending"] - p["shooting"]) * 0.5,
+        ),
+        reverse=True,
+    )
+    for p in cb_pool[:required_cbs]:
+        positions[p["key"]] = "CB"
+        assigned.add(p["key"])
+
     # 6. Remaining outfield players: Single CAM rule & 2 stats (CB/CM/ST)
-    cam_assigned = False
+    cam_assigned = any(pos == "CAM" for pos in positions.values())
     unassigned = [p for p in raw_players if p["key"] not in assigned]
     unassigned.sort(key=lambda p: (p["rating"], p["passing"] + p["shooting"]), reverse=True)
 
