@@ -13,6 +13,7 @@ from commands_handler import (
     MatchPreviewView,
     build_help_embed,
     build_individual_record_embed,
+    build_match_highlights_embed,
     check_guild_and_channel,
     is_user_admin,
     register_commands,
@@ -78,6 +79,7 @@ def test_command_registration_names(test_config: BotConfig, tmp_path: Path) -> N
         "say",
         "help",
         "individual-record",
+        "highlights",
         "Reply as Bot",
     }
     assert registered_names == expected_commands
@@ -1708,6 +1710,33 @@ def test_build_individual_record_embed() -> None:
     assert "M-20261120-01" in val
     assert "M-20261121-02" in val
     assert "2**G | 🎯 **1**A" in val
+
+
+def test_build_match_highlights_embed() -> None:
+    """Verifies that the match highlights embed displays score, MVP, and lineup stats."""
+    m = MatchRecord(
+        match_id="M-TEST-HIGHLIGHTS-01",
+        date="2026-11-20 18:00:00",
+        result=MatchResult.HOME_WIN,
+        submitted_by="AdminUser",
+        notes="Score: 4 - 2 (Home Win)",
+        player_stats=[
+            PlayerStat(player="Son", goals=3, assists=1, result=MatchResult.HOME_WIN),
+            PlayerStat(player="Lilly", goals=1, assists=2, result=MatchResult.HOME_WIN),
+            PlayerStat(player="Skan", goals=2, assists=0, result=MatchResult.AWAY_WIN),
+        ],
+    )
+    embed = build_match_highlights_embed(m)
+    assert "Match Highlights — ID: M-TEST-HIGHLIGHTS-01" in embed.title
+    assert "M-TEST-HIGHLIGHTS-01" in embed.fields[0].value
+    field_names = [f.name for f in embed.fields]
+    assert any("Winning Side" in name for name in field_names)
+    assert any("Defeated Side" in name for name in field_names)
+    assert any("Match MVP" in name for name in field_names)
+    # Son has 3G 1A (4 G/A) -> Match MVP
+    mvp_field = next(f for f in embed.fields if f.name == "⭐ Match MVP")
+    assert "Son" in mvp_field.value
+    assert "3**G | 🎯 **1**A" in mvp_field.value
 
 
 

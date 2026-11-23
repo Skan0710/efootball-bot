@@ -7,10 +7,12 @@ pinging the updates role so members know what is new.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
 import subprocess
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -22,6 +24,51 @@ LOGGER = logging.getLogger("efootball_bot.update_notifier")
 
 DEFAULT_UPDATE_CHANNEL_ID = 1525228800999428268
 DEFAULT_UPDATE_ROLE_ID = 1525397453770063874
+
+IST = timezone(timedelta(hours=5, minutes=30))
+ANNOUNCEMENT_TARGET_HOUR_IST = 23  # 11:00 PM IST
+ANNOUNCEMENT_TARGET_MINUTE_IST = 0
+
+
+def get_ist_now() -> datetime:
+    """Returns current datetime in Indian Standard Time (UTC+5:30)."""
+    return datetime.now(timezone.utc).astimezone(IST)
+
+
+def is_before_announcement_time(
+    target_hour: int = ANNOUNCEMENT_TARGET_HOUR_IST,
+    target_minute: int = ANNOUNCEMENT_TARGET_MINUTE_IST,
+) -> bool:
+    """Returns True if the current IST time is earlier than target announcement time (11:00 PM IST)."""
+    now = get_ist_now()
+    return now.hour < target_hour or (now.hour == target_hour and now.minute < target_minute)
+
+
+def seconds_until_announcement_time(
+    target_hour: int = ANNOUNCEMENT_TARGET_HOUR_IST,
+    target_minute: int = ANNOUNCEMENT_TARGET_MINUTE_IST,
+) -> float:
+    """Returns seconds remaining until the announcement time today in IST."""
+    now = get_ist_now()
+    target = now.replace(hour=target_hour, minute=target_minute, second=0, microsecond=0)
+    diff = (target - now).total_seconds()
+    return max(0.0, diff)
+
+
+async def _schedule_deferred_announcement(
+    bot: discord.Client,
+    config: BotConfig,
+    repo_dir: Optional[Path],
+    delay: float,
+) -> None:
+    """Waits until 11:00 PM IST and then executes the update announcement."""
+    try:
+        LOGGER.info("Deferred announcement sleeping for %.1f seconds until 11:00 PM IST...", delay)
+        await asyncio.sleep(delay)
+        LOGGER.info("11:00 PM IST reached; triggering deferred update announcement now.")
+        await check_and_announce_update(bot, config, repo_dir=repo_dir, force_now=True)
+    except Exception as exc:
+        LOGGER.warning("Error in deferred update announcement: %s", exc)
 
 
 def get_current_git_commit(repo_dir: Optional[Path] = None) -> Optional[str]:
@@ -166,6 +213,7 @@ async def check_and_announce_update(
     bot: discord.Client,
     config: BotConfig,
     repo_dir: Optional[Path] = None,
+    force_now: bool = False,
 ) -> bool:
     """Checks if a new code update was deployed and automatically announces it.
 
@@ -237,6 +285,17 @@ async def check_and_announce_update(
             "Tactical positions synchronized with card archetypes (ST, CAM, CM, RW, LW, CB).",
             "Special In-Form (TOTW) and POTM boosts refined.",
         ]
+
+    # Timing constraint: Do not send update announcement before 11:00 PM IST
+    if not force_now and is_before_announcement_time():
+        delay = seconds_until_announcement_time()
+        LOGGER.info(
+            "Update detected (commit %s) before 11:00 PM IST. Scheduling auto-trigger in %.1f seconds.",
+            current_commit[:7],
+            delay,
+        )
+        asyncio.create_task(_schedule_deferred_announcement(bot, config, repo_dir, delay))
+        return False
 
     channel_id = config.update_channel_id
     role_id = config.update_role_id

@@ -418,6 +418,65 @@ def build_individual_record_embed(
     return embed
 
 
+def build_match_highlights_embed(match: MatchRecord) -> discord.Embed:
+    """Builds a comprehensive match highlights embed showing full match statistics, lineup, and top performer."""
+    scoreline = format_match_scoreline(match)
+    color = (
+        discord.Color.green()
+        if match.result in (MatchResult.HOME_WIN, MatchResult.WIN)
+        else (discord.Color.red() if match.result in (MatchResult.AWAY_WIN, MatchResult.LOSS) else discord.Color.gold())
+    )
+
+    embed = discord.Embed(
+        title=f"🌟 Match Highlights — ID: {match.match_id}",
+        description=f"### {scoreline}\n**Outcome:** {match.result.value}",
+        color=color,
+        timestamp=datetime.now(),
+    )
+
+    embed.add_field(name="🆔 Match ID", value=f"`{match.match_id}`", inline=True)
+    embed.add_field(name="📅 Date & Time", value=match.date or "N/A", inline=True)
+    embed.add_field(name="👤 Recorded By", value=match.submitted_by or "Unknown", inline=True)
+
+    win_stats = [p for p in match.player_stats if p.result in (MatchResult.WIN, MatchResult.HOME_WIN)]
+    loss_stats = [p for p in match.player_stats if p.result in (MatchResult.LOSS, MatchResult.AWAY_WIN)]
+    draw_stats = [p for p in match.player_stats if p.result == MatchResult.DRAW]
+
+    def _format_player_stat(p: PlayerStat) -> str:
+        ga = p.goals + p.assists
+        return f"• **{p.player}**: ⚽ **{p.goals}**G | 🎯 **{p.assists}**A | 🌟 **{ga}** G/A"
+
+    if win_stats and loss_stats:
+        win_lines = "\n".join(_format_player_stat(p) for p in win_stats)
+        loss_lines = "\n".join(_format_player_stat(p) for p in loss_stats)
+        embed.add_field(name=f"🏆 Winning Side ({len(win_stats)} players)", value=win_lines, inline=False)
+        embed.add_field(name=f"💔 Defeated Side ({len(loss_stats)} players)", value=loss_lines, inline=False)
+    elif draw_stats:
+        draw_lines = "\n".join(_format_player_stat(p) for p in draw_stats)
+        embed.add_field(name=f"🤝 Draw Side ({len(draw_stats)} players)", value=draw_lines, inline=False)
+    elif match.player_stats:
+        stat_lines = "\n".join(_format_player_stat(p) for p in match.player_stats)
+        embed.add_field(name=f"👥 Players ({len(match.player_stats)})", value=stat_lines, inline=False)
+    else:
+        embed.add_field(name="👥 Players", value="*No player statistics recorded.*", inline=False)
+
+    # Top Performer / Match MVP
+    if match.player_stats:
+        best_performer = max(match.player_stats, key=lambda p: (p.goals + p.assists, p.goals))
+        best_ga = best_performer.goals + best_performer.assists
+        embed.add_field(
+            name="⭐ Match MVP",
+            value=f"**{best_performer.player}** — ⚽ **{best_performer.goals}**G | 🎯 **{best_performer.assists}**A (**{best_ga}** G/A)",
+            inline=False,
+        )
+
+    if match.notes and not match.notes.strip().lower().startswith("score:"):
+        embed.add_field(name="📝 Notes", value=match.notes, inline=False)
+
+    embed.set_footer(text="eFootball Bot • Match Highlights • Use /matches to browse all games")
+    return embed
+
+
 def build_preview_embed(
     candidates: List[OCRPlayerCandidate],
     result: MatchResult,
@@ -3941,4 +4000,38 @@ def register_commands(
             return
 
         embed = build_individual_record_embed(canonical_name, player_matches)
+        await interaction.response.send_message(embed=embed)
+
+    # 21. /highlights
+    @tree.command(
+        name="highlights",
+        description="Show complete stats, scoreline, and player contributions for a specified match ID.",
+    )
+    @app_commands.describe(match_id="Unique Match ID (e.g. M-20261120-01)")
+    async def highlights_cmd(interaction: discord.Interaction, match_id: str) -> None:
+        err = check_guild_and_channel(interaction, config)
+        if err:
+            await interaction.response.send_message(f"❌ {err}", ephemeral=True)
+            return
+
+        all_matches = await excel_manager.get_all_matches()
+        if not all_matches:
+            await interaction.response.send_message(
+                "📋 No matches recorded yet in the workbook. Submit your first screenshot with `/add-match-image`!",
+                ephemeral=True,
+            )
+            return
+
+        clean_id = match_id.strip().upper()
+        target_match = next((m for m in all_matches if m.match_id.upper() == clean_id), None)
+
+        if not target_match:
+            recent_ids = ", ".join(f"`{m.match_id}`" for m in all_matches[-5:])
+            await interaction.response.send_message(
+                f"❌ Match ID **`{match_id}`** was not found.\n**Recent Match IDs:** {recent_ids}\nUse `/matches` to browse recent games.",
+                ephemeral=True,
+            )
+            return
+
+        embed = build_match_highlights_embed(target_match)
         await interaction.response.send_message(embed=embed)

@@ -17,7 +17,9 @@ from update_notifier import (
     get_commit_messages_since,
     get_current_git_commit,
     get_pending_update_highlights,
+    is_before_announcement_time,
     is_silent_commit,
+    seconds_until_announcement_time,
 )
 
 
@@ -121,7 +123,7 @@ async def test_check_and_announce_update_sends_when_new_commit(tmp_path: Path) -
     mock_bot = MagicMock()
     mock_bot.get_channel.return_value = mock_channel
 
-    announced = await check_and_announce_update(mock_bot, dummy_config)
+    announced = await check_and_announce_update(mock_bot, dummy_config, force_now=True)
     assert announced is True
 
     # Verify message was sent with role mention allowed
@@ -135,3 +137,13 @@ async def test_check_and_announce_update_sends_when_new_commit(tmp_path: Path) -
     new_state = json.loads(state_file.read_text(encoding="utf-8"))
     assert new_state["last_announced_commit"] != "old_commit_123"
     assert len(new_state["last_announced_commit"]) == 40
+
+
+def test_announcement_timing_gate() -> None:
+    """Verifies that the 11:00 PM IST timing gate calculates delays accurately."""
+    # Target 23:00 (11:00 PM IST)
+    before = is_before_announcement_time(target_hour=23, target_minute=0)
+    # The return value depends on current IST time, but function should return a boolean
+    assert isinstance(before, bool)
+    remaining = seconds_until_announcement_time(target_hour=23, target_minute=0)
+    assert remaining >= 0.0
