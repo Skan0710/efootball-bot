@@ -1657,29 +1657,26 @@ async def test_add_match_roster_filter_minimum_and_equal_teams(tmp_path: Path) -
 
 
 def test_build_help_embed_overview_and_categories() -> None:
-    """Verifies that the help embed generates correctly for all categories and specific filters."""
-    # Overview (all)
+    """Verifies that the help embed generates correctly with 5-command pages and filtering."""
+    # Overview (all) page 1
     embed_all = build_help_embed("all")
-    assert "Command Directory" in embed_all.title
-    assert len(embed_all.fields) >= 5
-    # Check that major categories exist
-    field_names = [f.name for f in embed_all.fields]
-    assert any("Match Logging" in name for name in field_names)
-    assert any("Matches" in name for name in field_names)
-    assert any("Player Profiles" in name for name in field_names)
-    assert any("Leaderboards" in name for name in field_names)
+    assert "Command Guide" in embed_all.title
+    assert len(embed_all.fields) == 1
+    # 5 commands per page
+    val = embed_all.fields[0].value
+    assert "#1." in val
+    assert "#5." in val
+    assert "#6." not in val
 
     # Filtered by category
     embed_players = build_help_embed("players")
-    assert "Player Profiles" in embed_players.description
+    assert "Command Guide" in embed_players.title
     assert len(embed_players.fields) == 1
     assert "/record" in embed_players.fields[0].value
-    assert "/card" in embed_players.fields[0].value
-    assert "/chemistry" in embed_players.fields[0].value
 
 
 def test_build_individual_record_embed() -> None:
-    """Verifies that the individual record embed displays matches, match IDs, and goal contributions."""
+    """Verifies that the individual record embed displays 5 matches per page, career overview, and contributions."""
     m1 = MatchRecord(
         match_id="M-20261120-01",
         date="2026-11-20 14:00:00",
@@ -1700,16 +1697,16 @@ def test_build_individual_record_embed() -> None:
     player_matches = [(m1, m1.player_stats[0]), (m2, m2.player_stats[0])]
     embed = build_individual_record_embed("Son", player_matches)
 
-    assert "Individual Match Record — Son" in embed.title
-    assert "Matches Played:** 2" in embed.description
-    assert "Goals:** 2" in embed.description
-    assert "Assists:** 2" in embed.description
-    assert "Total G/A:** 4" in embed.description
-    assert len(embed.fields) >= 1
-    val = embed.fields[0].value
-    assert "M-20261120-01" in val
-    assert "M-20261121-02" in val
-    assert "2**G | 🎯 **1**A" in val
+    assert "Match History & Contributions — Son" in embed.title
+    career_val = embed.fields[0].value
+    assert "Matches Played:** 2" in career_val
+    assert "Total Goals:** 2" in career_val
+    assert "Total Assists:** 2" in career_val
+    assert "Total G/A:** 4" in career_val
+    log_val = embed.fields[1].value
+    assert "M-20261120-01" in log_val
+    assert "M-20261121-02" in log_val
+    assert "⚽ **2** Goal(s)" in log_val
 
 
 def test_build_match_highlights_embed() -> None:

@@ -262,102 +262,229 @@ def build_latest_match_embed(
     return embed
 
 
-HELP_CATEGORIES = {
-    "logging": {
-        "title": "📸 Match Logging & Management",
-        "description": (
-            "• `/add-match-image` — Submit screenshot(s) for automatic OCR score & player stats extraction.\n"
-            "• `/add-match-text` — Add match data and player statistics directly via manual text input.\n"
-            "• `/edit-match` — Edit an existing match's scores, players, goals, assists, or outcome.\n"
-            "• `/delete-match` — Permanently delete a specific match record by ID.\n"
-            "• `/delete-latest` — Permanently delete the latest recorded match (Admin password required).\n"
-            "• `/delete-all` — Wipe all matches and statistics from the workbook (Admin password required)."
-        ),
-    },
-    "matches": {
-        "title": "📜 Matches & Matchday Analysis",
-        "description": (
-            "• `/matches [limit]` — View recent co-op match history and match IDs.\n"
-            "• `/latest-match` — View detailed lineup, scoreline, and player contributions for the latest match.\n"
-            "• `/highlights <match_id>` — Show full statistics, lineups, and match MVP for a specified match ID.\n"
-            "• `/recap` — View a comprehensive recap of today's matches, session MVP, and performance trends.\n"
-            "• `/pundit [match_id]` — AI commentary desk review (Drury praise, Keane roast & banter)."
-        ),
-    },
-    "players": {
-        "title": "👤 Player Profiles & Chemistry",
-        "description": (
-            "• `/record <player>` — View career statistics, win rates, clean sheets, and averages.\n"
-            "• `/individual-record <player>` — List every match played by a player with their goal contributions & match IDs.\n"
-            "• `/card <player>` — Generate an FC 27-style FUT player card image with realistic OVR and face stats.\n"
-            "• `/form <player>` — Check recent 5-match form rating, streaks, and match-by-match trajectory.\n"
-            "• `/trophies <player>` — View unlockable achievements, career milestones, and badges.\n"
-            "• `/chemistry <player>` — Find player's best partner, cursed duo, kryptonite, and favorite opponent.\n"
-            "• `/duo-card <p1> <p2>` — Generate an EA FC Dynamic Duo dual card showcasing partner synergy.\n"
-            "• `/compare <p1> <p2>` — Side-by-side career statistics comparison of two players.\n"
-            "• `/h2h <p1> <p2>` — Head-to-head rivalry comparison and duo partnership record.\n"
-            "• `/rivalry <p1> <p2>` — Grudge match record when two players clashed on opposing teams."
-        ),
-    },
-    "leaderboards": {
-        "title": "🏆 Leaderboards & Accolades",
-        "description": (
-            "• `/leaderboard [stat]` — Group rankings for goals, assists, G/A, wins, clean sheets, and rating.\n"
-            "• `/leaders` — Snapshot of the #1 ranked player in every statistical category.\n"
-            "• `/tierlist` — Visual tier list (S/A/B/C) ranking all server players.\n"
-            "• `/hall-of-fame` — All-time club records, biggest wins, and single-match records.\n"
-            "• `/potw` — Show Player of the Week ranking and form (Mon–Sun).\n"
-            "• `/potm` — Show Player of the Month ranking and form.\n"
-            "• `/best-team` — Teammate duo partnerships ranked by most co-op wins together.\n"
-            "• `/best-team-leader` — Captains & Team Leaders leaderboard ranked by wins.\n"
-            "• `/captain-h2h` — Managerial rivalry stats between two team captains.\n"
-            "• `/teammates` — List all registered teammates and their aggregate totals."
-        ),
-    },
-    "tactics": {
-        "title": "⚽ Tactics & Predictions",
-        "description": (
-            "• `/fair-teams` — Split 4, 5, or 6 players into mathematically balanced co-op teams.\n"
-            "• `/squad` — Starting lineup and tactical pitch view of the co-op squad.\n"
-            "• `/totw` — Team of the Week tactical pitch lineup.\n"
-            "• `/predict` — Predict the outcome and exact score of the upcoming match.\n"
-            "• `/predictions-leaderboard` — View matchday predictions leaderboard standings."
-        ),
-    },
-    "utility": {
-        "title": "⚙️ Utilities & Admin",
-        "description": (
-            "• `/help [category]` — Display this comprehensive command directory and guide.\n"
-            "• `/say [message] [reply_to]` — Send a message in the channel as the bot (Admin only)."
-        ),
-    },
-}
+HELP_COMMANDS = [
+    # Match Logging
+    {"name": "/add-match-image", "category": "Match Logging", "desc": "Submit post-match screenshot(s) for automatic OCR score & player stats extraction."},
+    {"name": "/add-match-text", "category": "Match Logging", "desc": "Add match data and player statistics directly via manual text input."},
+    {"name": "/edit-match", "category": "Match Logging", "desc": "Edit an existing match's scores, players, goals, assists, or outcome."},
+    {"name": "/delete-match", "category": "Match Logging", "desc": "Permanently delete a specific match record by ID."},
+    {"name": "/delete-latest", "category": "Match Logging", "desc": "Permanently delete the latest recorded match (Requires admin password)."},
+    {"name": "/delete-all", "category": "Match Logging", "desc": "Wipe all matches and statistics from the workbook (Requires admin password)."},
+
+    # Matches & Matchday
+    {"name": "/matches [limit]", "category": "Match History", "desc": "View recent co-op match history and unique match IDs."},
+    {"name": "/latest-match", "category": "Match History", "desc": "View detailed lineup, scoreline, and player contributions for latest match."},
+    {"name": "/highlights <match_id>", "category": "Match History", "desc": "Generate and display the visual scoreboard banner card for any match ID."},
+    {"name": "/recap", "category": "Match History", "desc": "View a comprehensive recap of today's matches, session MVP, and performance trends."},
+    {"name": "/pundit [match_id]", "category": "Match History", "desc": "Get an AI commentary desk review (Drury praise, Keane roast & locker room banter)."},
+
+    # Player Profiles & Chemistry
+    {"name": "/record <player>", "category": "Player Profiles", "desc": "View all-time career statistics, win rates, clean sheets, and averages."},
+    {"name": "/individual-record <player>", "category": "Player Profiles", "desc": "Browse all matches played by a player with their goal contributions & match IDs (5 per page)."},
+    {"name": "/card <player>", "category": "Player Profiles", "desc": "Generate an EA FC 27-style FUT player card image with realistic OVR & face stats."},
+    {"name": "/form <player>", "category": "Player Profiles", "desc": "Check recent 5-match form rating, streaks, and match-by-match trajectory."},
+    {"name": "/trophies <player>", "category": "Player Profiles", "desc": "View unlockable career achievements, badges, and milestones."},
+    {"name": "/chemistry <player>", "category": "Player Profiles", "desc": "Find player's best partner, cursed duo, kryptonite, and favorite opponent."},
+    {"name": "/duo-card <p1> <p2>", "category": "Player Profiles", "desc": "Generate an EA FC Dynamic Duo dual card showcasing partner synergy."},
+    {"name": "/compare <p1> <p2>", "category": "Player Profiles", "desc": "Side-by-side career statistics comparison of two players."},
+    {"name": "/h2h <p1> <p2>", "category": "Player Profiles", "desc": "Head-to-head rivalry comparison and duo partnership record."},
+    {"name": "/rivalry <p1> <p2>", "category": "Player Profiles", "desc": "Grudge match record when two players clashed on opposing teams."},
+
+    # Leaderboards & Rankings
+    {"name": "/leaderboard [stat]", "category": "Leaderboards", "desc": "Server rankings for goals, assists, G/A, wins, clean sheets, and rating."},
+    {"name": "/leaders", "category": "Leaderboards", "desc": "Snapshot of the #1 ranked player in every statistical category."},
+    {"name": "/tierlist", "category": "Leaderboards", "desc": "Display a visual tier list (S/A/B/C) ranking all server players."},
+    {"name": "/hall-of-fame", "category": "Leaderboards", "desc": "View all-time club records, biggest wins, and single-match records."},
+    {"name": "/potw", "category": "Leaderboards", "desc": "Show Player of the Week ranking and form (Monday–Sunday)."},
+    {"name": "/potm", "category": "Leaderboards", "desc": "Show Player of the Month ranking and form."},
+    {"name": "/best-team", "category": "Leaderboards", "desc": "Teammate duo partnerships ranked by most co-op wins together."},
+    {"name": "/best-team-leader", "category": "Leaderboards", "desc": "Captains & Team Leaders leaderboard ranked by most wins as leader."},
+    {"name": "/captain-h2h <c1> <c2>", "category": "Leaderboards", "desc": "Managerial rivalry stats between two team captains."},
+    {"name": "/teammates", "category": "Leaderboards", "desc": "List all registered teammates and their aggregate totals."},
+
+    # Tactics & Predictions
+    {"name": "/fair-teams [p1..p6]", "category": "Tactics & Predictions", "desc": "Split 4, 5, or 6 players into mathematically balanced co-op teams."},
+    {"name": "/squad", "category": "Tactics & Predictions", "desc": "Display starting lineup and tactical pitch view of the co-op squad."},
+    {"name": "/totw", "category": "Tactics & Predictions", "desc": "Display Team of the Week tactical pitch lineup."},
+    {"name": "/predict <outcome> [score]", "category": "Tactics & Predictions", "desc": "Predict the outcome and exact score of the upcoming match."},
+    {"name": "/predictions-leaderboard", "category": "Tactics & Predictions", "desc": "View matchday predictions leaderboard standings and points."},
+
+    # Utilities
+    {"name": "/help [category]", "category": "Utilities", "desc": "Browse this interactive command directory (5 commands per page)."},
+    {"name": "/say [message] [reply_to]", "category": "Utilities", "desc": "Send a message in the channel as the bot (Server Admin only)."},
+]
 
 
-def build_help_embed(category: str = "all") -> discord.Embed:
-    """Builds a rich guide embed for bot slash commands."""
+def build_help_page_embed(
+    commands_list: Optional[List[dict]] = None,
+    page_index: int = 0,
+    page_size: int = 5,
+    category: Optional[str] = None,
+) -> discord.Embed:
+    """Builds an enhanced, spaced 5-commands-per-page guide embed for /help."""
+    raw_list = commands_list if commands_list is not None else HELP_COMMANDS
     cat_key = (category or "all").lower().strip()
+
+    if cat_key != "all":
+        key = cat_key.rstrip("s")
+        filtered = [c for c in raw_list if key in c["category"].lower() or cat_key in c["category"].lower()]
+        if not filtered:
+            filtered = raw_list
+    else:
+        filtered = raw_list
+
+    total_cmds = len(filtered)
+    total_pages = max(1, (total_cmds + page_size - 1) // page_size)
+    bounded_page = max(0, min(page_index, total_pages - 1))
+    start_idx = bounded_page * page_size
+    end_idx = min(start_idx + page_size, total_cmds)
+    page_items = filtered[start_idx:end_idx]
+
     embed = discord.Embed(
-        title="📖 eFootball Bot — Command Directory",
+        title="📖 eFootball Bot — Command Guide",
+        description="Below are the available slash commands with syntax and explanations.\nUse the buttons below to browse through pages (5 commands per page).",
         color=discord.Color.gold(),
         timestamp=datetime.now(),
     )
 
-    if cat_key in HELP_CATEGORIES:
-        info = HELP_CATEGORIES[cat_key]
-        embed.description = f"### {info['title']}\nHere are the commands available in this section:"
-        embed.add_field(name="Commands & Descriptions", value=info["description"], inline=False)
-        embed.set_footer(text="Tip: Use `/help category:all` to view the full command directory.")
-        return embed
+    blocks = []
+    for offset, cmd in enumerate(page_items, start=start_idx + 1):
+        block = (
+            f"**#{offset}. `{cmd['name']}`**  •  `{cmd['category']}`\n"
+            f"   └ {cmd['desc']}"
+        )
+        blocks.append(block)
 
-    embed.description = (
-        "Welcome to the **eFootball Co-op Bot**! Below is an overview of all available slash commands.\n"
-        "Use `/help category:<category>` to focus on a specific section."
+    formatted = "\n\n───────────────────────────────\n\n".join(blocks) if blocks else "*No commands found.*"
+    embed.add_field(
+        name=f"⚡ Commands (Showing {start_idx + 1}–{end_idx} of {total_cmds})",
+        value=formatted,
+        inline=False,
     )
-    for cat, info in HELP_CATEGORIES.items():
-        embed.add_field(name=info["title"], value=info["description"], inline=False)
 
-    embed.set_footer(text="eFootball Bot • Complete Command Directory • Built for competitive co-op tracking")
+    embed.set_footer(text=f"Page {bounded_page + 1} of {total_pages} • 5 commands per page • eFootball Bot")
+    return embed
+
+
+def build_help_embed(category: str = "all") -> discord.Embed:
+    """Backwards-compatible helper returning the first page of help."""
+    return build_help_page_embed(page_index=0, page_size=5, category=category)
+
+
+class HelpPaginationView(discord.ui.View):
+    """Interactive pagination controls for /help (5 commands per page)."""
+
+    def __init__(
+        self,
+        commands_list: List[dict],
+        author_id: int,
+        page_size: int = 5,
+        timeout: float = 300.0,
+    ) -> None:
+        super().__init__(timeout=timeout)
+        self.commands_list = commands_list
+        self.author_id = author_id
+        self.page_size = page_size
+        self.current_page = 0
+        self.total_pages = max(1, (len(self.commands_list) + page_size - 1) // page_size)
+        self._update_buttons()
+
+    def _update_buttons(self) -> None:
+        self.prev_button.disabled = (self.current_page == 0)
+        self.next_button.disabled = (self.current_page >= self.total_pages - 1)
+        self.page_indicator.label = f"Page {self.current_page + 1}/{self.total_pages}"
+
+    def build_current_page_embed(self) -> discord.Embed:
+        return build_help_page_embed(
+            commands_list=self.commands_list,
+            page_index=self.current_page,
+            page_size=self.page_size,
+        )
+
+    @discord.ui.button(label="◀ Prev", style=discord.ButtonStyle.secondary, custom_id="help_prev")
+    async def prev_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message("❌ Only the command invoker can change pages.", ephemeral=True)
+            return
+        if self.current_page > 0:
+            self.current_page -= 1
+            self._update_buttons()
+            await interaction.response.edit_message(embed=self.build_current_page_embed(), view=self)
+
+    @discord.ui.button(label="Page 1/1", style=discord.ButtonStyle.primary, disabled=True, custom_id="help_page")
+    async def page_indicator(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        pass
+
+    @discord.ui.button(label="Next ▶", style=discord.ButtonStyle.secondary, custom_id="help_next")
+    async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message("❌ Only the command invoker can change pages.", ephemeral=True)
+            return
+        if self.current_page < self.total_pages - 1:
+            self.current_page += 1
+            self._update_buttons()
+            await interaction.response.edit_message(embed=self.build_current_page_embed(), view=self)
+
+
+def build_individual_record_page_embed(
+    player: str,
+    all_player_matches: List[Tuple[MatchRecord, PlayerStat]],
+    page_index: int = 0,
+    page_size: int = 5,
+) -> discord.Embed:
+    """Builds a beautifully spaced, clean 5-match page embed for /individual-record."""
+    total_matches = len(all_player_matches)
+    total_goals = sum(p.goals for _, p in all_player_matches)
+    total_assists = sum(p.assists for _, p in all_player_matches)
+    total_ga = total_goals + total_assists
+    wins = sum(1 for _, p in all_player_matches if p.result in (MatchResult.WIN, MatchResult.HOME_WIN))
+    losses = sum(1 for _, p in all_player_matches if p.result in (MatchResult.LOSS, MatchResult.AWAY_WIN))
+    draws = sum(1 for _, p in all_player_matches if p.result == MatchResult.DRAW)
+    win_rate = (wins / total_matches * 100.0) if total_matches > 0 else 0.0
+
+    total_pages = max(1, (total_matches + page_size - 1) // page_size)
+    bounded_page = max(0, min(page_index, total_pages - 1))
+    start_idx = bounded_page * page_size
+    end_idx = min(start_idx + page_size, total_matches)
+    page_matches = all_player_matches[start_idx:end_idx]
+
+    embed = discord.Embed(
+        title=f"📋 Match History & Contributions — {player}",
+        color=discord.Color.blue(),
+        timestamp=datetime.now(),
+    )
+
+    career_summary = (
+        f"🎮 **Matches Played:** {total_matches}   |   🏆 **Win Rate:** {win_rate:.1f}% ({wins}W - {draws}D - {losses}L)\n"
+        f"⚽ **Total Goals:** {total_goals}   |   🎯 **Total Assists:** {total_assists}   |   🌟 **Total G/A:** {total_ga} (avg {(total_ga / total_matches):.2f}/gm)"
+    )
+    embed.add_field(name="📊 Career Overview", value=career_summary, inline=False)
+
+    match_blocks = []
+    for offset, (match, stat) in enumerate(page_matches, start=start_idx + 1):
+        outcome_tag = (
+            "🟢 **WIN**" if stat.result in (MatchResult.WIN, MatchResult.HOME_WIN)
+            else ("🔴 **LOSS**" if stat.result in (MatchResult.LOSS, MatchResult.AWAY_WIN) else "🟡 **DRAW**")
+        )
+        date_str = match.date[:10] if match.date else "N/A"
+        scoreline = format_match_scoreline(match)
+
+        block = (
+            f"**Match #{offset}**  •  {outcome_tag}\n"
+            f"🆔 `{match.match_id}`  •  📅 {date_str}\n"
+            f"🏟️ {scoreline}\n"
+            f"📈 **Player Impact:** ⚽ **{stat.goals}** Goal(s)   🎯 **{stat.assists}** Assist(s)   🌟 **{stat.goals + stat.assists}** G/A"
+        )
+        match_blocks.append(block)
+
+    formatted_content = "\n\n───────────────────────────────\n\n".join(match_blocks) if match_blocks else "*No matches found.*"
+    embed.add_field(
+        name=f"🎮 Match Log (Showing {start_idx + 1}–{end_idx} of {total_matches})",
+        value=formatted_content,
+        inline=False,
+    )
+
+    embed.set_footer(text=f"Page {bounded_page + 1} of {total_pages} • 5 matches per page • Use buttons below to change pages")
     return embed
 
 
@@ -365,57 +492,67 @@ def build_individual_record_embed(
     player: str,
     player_matches: List[Tuple[MatchRecord, PlayerStat]],
 ) -> discord.Embed:
-    """Builds a comprehensive individual match history embed showing goal contributions and match IDs."""
-    total_matches = len(player_matches)
-    total_goals = sum(p.goals for _, p in player_matches)
-    total_assists = sum(p.assists for _, p in player_matches)
-    total_ga = total_goals + total_assists
-    wins = sum(1 for _, p in player_matches if p.result in (MatchResult.WIN, MatchResult.HOME_WIN))
-    losses = sum(1 for _, p in player_matches if p.result in (MatchResult.LOSS, MatchResult.AWAY_WIN))
-    draws = sum(1 for _, p in player_matches if p.result == MatchResult.DRAW)
-    win_rate = (wins / total_matches * 100.0) if total_matches > 0 else 0.0
+    """Backwards-compatible helper returning page 0 of the individual record."""
+    reversed_matches = list(reversed(player_matches))
+    return build_individual_record_page_embed(player, reversed_matches, page_index=0, page_size=5)
 
-    embed = discord.Embed(
-        title=f"📋 Individual Match Record — {player}",
-        description=(
-            f"**Career Summary:**\n"
-            f"🎮 **Matches Played:** {total_matches} | ⚽ **Goals:** {total_goals} | 🎯 **Assists:** {total_assists}\n"
-            f"🌟 **Total G/A:** {total_ga} ({(total_ga / total_matches):.2f}/game)\n"
-            f"🏆 **Record:** {wins}W - {draws}D - {losses}L (**{win_rate:.1f}%** Win Rate)"
-        ),
-        color=discord.Color.blue(),
-        timestamp=datetime.now(),
-    )
 
-    # Format match lines (newest first)
-    chronological = list(reversed(player_matches))
-    display_matches = chronological[:20]
+class IndividualRecordPaginationView(discord.ui.View):
+    """Interactive pagination controls for /individual-record (5 matches per page)."""
 
-    lines = []
-    for match, stat in display_matches:
-        outcome_icon = "🟢" if stat.result in (MatchResult.WIN, MatchResult.HOME_WIN) else (
-            "🔴" if stat.result in (MatchResult.LOSS, MatchResult.AWAY_WIN) else "🟡"
+    def __init__(
+        self,
+        player: str,
+        player_matches: List[Tuple[MatchRecord, PlayerStat]],
+        author_id: int,
+        page_size: int = 5,
+        timeout: float = 300.0,
+    ) -> None:
+        super().__init__(timeout=timeout)
+        self.player = player
+        self.player_matches = list(reversed(player_matches))  # Newest first
+        self.author_id = author_id
+        self.page_size = page_size
+        self.current_page = 0
+        self.total_pages = max(1, (len(self.player_matches) + page_size - 1) // page_size)
+        self._update_buttons()
+
+    def _update_buttons(self) -> None:
+        self.prev_button.disabled = (self.current_page == 0)
+        self.next_button.disabled = (self.current_page >= self.total_pages - 1)
+        self.page_indicator.label = f"Page {self.current_page + 1}/{self.total_pages}"
+
+    def build_current_page_embed(self) -> discord.Embed:
+        return build_individual_record_page_embed(
+            self.player,
+            self.player_matches,
+            page_index=self.current_page,
+            page_size=self.page_size,
         )
-        date_str = match.date[:10] if match.date else "N/A"
-        scoreline = format_match_scoreline(match)
-        line = (
-            f"{outcome_icon} **`{match.match_id}`** ({date_str}) — {scoreline}\n"
-            f"   ⚽ **{stat.goals}**G | 🎯 **{stat.assists}**A | 🌟 **{stat.goals + stat.assists}** G/A ({stat.result.value})"
-        )
-        lines.append(line)
 
-    chunk_size = 5
-    for i in range(0, len(lines), chunk_size):
-        chunk = lines[i : i + chunk_size]
-        field_name = f"Matches {i + 1} – {i + len(chunk)}" if len(lines) > chunk_size else "Match History & Goal Contributions"
-        embed.add_field(name=field_name, value="\n".join(chunk), inline=False)
+    @discord.ui.button(label="◀ Prev", style=discord.ButtonStyle.secondary, custom_id="indiv_prev")
+    async def prev_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message("❌ Only the command invoker can change pages.", ephemeral=True)
+            return
+        if self.current_page > 0:
+            self.current_page -= 1
+            self._update_buttons()
+            await interaction.response.edit_message(embed=self.build_current_page_embed(), view=self)
 
-    if total_matches > 20:
-        embed.set_footer(text=f"Showing latest 20 of {total_matches} total matches • eFootball Bot")
-    else:
-        embed.set_footer(text=f"Showing all {total_matches} matches • eFootball Bot")
+    @discord.ui.button(label="Page 1/1", style=discord.ButtonStyle.primary, disabled=True, custom_id="indiv_page")
+    async def page_indicator(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        pass
 
-    return embed
+    @discord.ui.button(label="Next ▶", style=discord.ButtonStyle.secondary, custom_id="indiv_next")
+    async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message("❌ Only the command invoker can change pages.", ephemeral=True)
+            return
+        if self.current_page < self.total_pages - 1:
+            self.current_page += 1
+            self._update_buttons()
+            await interaction.response.edit_message(embed=self.build_current_page_embed(), view=self)
 
 
 def build_match_highlights_embed(match: MatchRecord) -> discord.Embed:
@@ -3958,8 +4095,13 @@ def register_commands(
             return
 
         cat_key = (category or "all").lower().strip()
-        embed = build_help_embed(cat_key)
-        await interaction.response.send_message(embed=embed)
+        filtered = [c for c in HELP_COMMANDS if cat_key in c["category"].lower()] if cat_key != "all" else HELP_COMMANDS
+        view = HelpPaginationView(filtered, author_id=interaction.user.id, page_size=5)
+        embed = view.build_current_page_embed()
+        if view.total_pages > 1:
+            await interaction.response.send_message(embed=embed, view=view)
+        else:
+            await interaction.response.send_message(embed=embed)
 
     # 20. /individual-record
     @tree.command(
@@ -3999,8 +4141,12 @@ def register_commands(
             )
             return
 
-        embed = build_individual_record_embed(canonical_name, player_matches)
-        await interaction.response.send_message(embed=embed)
+        view = IndividualRecordPaginationView(canonical_name, player_matches, author_id=interaction.user.id, page_size=5)
+        embed = view.build_current_page_embed()
+        if view.total_pages > 1:
+            await interaction.response.send_message(embed=embed, view=view)
+        else:
+            await interaction.response.send_message(embed=embed)
 
     # 21. /highlights
     @tree.command(
