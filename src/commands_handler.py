@@ -157,8 +157,8 @@ def parse_players_from_team_param(team_param: Optional[str]) -> List[str]:
     return [canonicalize_player_name(p.strip()) for p in parts if p.strip()]
 
 
-def format_match_scoreline(match: MatchRecord) -> str:
-    """Formats a match record showing only team players and score (no match ID or metadata)."""
+def extract_match_teams_and_scores(match: MatchRecord) -> Tuple[str, str, int, int]:
+    """Extracts home team name, away team name, home score, and away score from a match record."""
     win_stats = [p for p in match.player_stats if p.result in (MatchResult.WIN, MatchResult.HOME_WIN)]
     loss_stats = [p for p in match.player_stats if p.result in (MatchResult.LOSS, MatchResult.AWAY_WIN)]
     draw_stats = [p for p in match.player_stats if p.result == MatchResult.DRAW]
@@ -211,6 +211,12 @@ def format_match_scoreline(match: MatchRecord) -> str:
         home_str = " & ".join(all_draw[:mid]) or "Home"
         away_str = " & ".join(all_draw[mid:]) or "Away"
 
+    return home_str, away_str, h_score if h_score is not None else 0, a_score if a_score is not None else 0
+
+
+def format_match_scoreline(match: MatchRecord) -> str:
+    """Formats a match record showing only team players and score (no match ID or metadata)."""
+    home_str, away_str, h_score, a_score = extract_match_teams_and_scores(match)
     return f"**{home_str}** {h_score} - {a_score} **{away_str}**"
 
 
@@ -4179,5 +4185,20 @@ def register_commands(
             )
             return
 
-        embed = build_match_highlights_embed(target_match)
-        await interaction.response.send_message(embed=embed)
+        home_str, away_str, h_score, a_score = extract_match_teams_and_scores(target_match)
+        try:
+            banner_buf = render_match_summary_card(
+                target_match,
+                home_str,
+                away_str,
+                h_score,
+                a_score,
+                target_match.result,
+            )
+            banner_filename = f"highlights_{target_match.match_id}.png"
+            banner_file = discord.File(fp=banner_buf, filename=banner_filename)
+            await interaction.response.send_message(file=banner_file)
+        except Exception as exc:
+            LOGGER.warning("Could not render match highlights image: %s; falling back to text embed", exc)
+            embed = build_match_highlights_embed(target_match)
+            await interaction.response.send_message(embed=embed)

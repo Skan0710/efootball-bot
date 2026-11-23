@@ -15,6 +15,7 @@ from commands_handler import (
     build_individual_record_embed,
     build_match_highlights_embed,
     check_guild_and_channel,
+    extract_match_teams_and_scores,
     is_user_admin,
     register_commands,
 )
@@ -1734,6 +1735,42 @@ def test_build_match_highlights_embed() -> None:
     mvp_field = next(f for f in embed.fields if f.name == "⭐ Match MVP")
     assert "Son" in mvp_field.value
     assert "3**G | 🎯 **1**A" in mvp_field.value
+
+
+def test_highlights_image_rendering() -> None:
+    """Verifies that /highlights extracts scoreboard details and renders the match summary card."""
+    from visuals import render_match_summary_card
+    from PIL import Image
+
+    m = MatchRecord(
+        match_id="M-TEST-IMG-01",
+        date="2026-11-20 20:00:00",
+        result=MatchResult.HOME_WIN,
+        submitted_by="AdminUser",
+        notes="Score: 5 - 2 (Home Win)",
+        player_stats=[
+            PlayerStat(player="Suri", goals=2, assists=1, result=MatchResult.HOME_WIN),
+            PlayerStat(player="Skan", goals=3, assists=2, result=MatchResult.HOME_WIN),
+            PlayerStat(player="Annie", goals=1, assists=1, result=MatchResult.AWAY_WIN),
+            PlayerStat(player="Jonny", goals=1, assists=1, result=MatchResult.AWAY_WIN),
+        ],
+    )
+
+    home_str, away_str, h_score, a_score = extract_match_teams_and_scores(m)
+    assert "Suri" in home_str
+    assert "Skan" in home_str
+    assert "Annie" in away_str
+    assert "Jonny" in away_str
+    assert h_score == 5
+    assert a_score == 2
+
+    buf = render_match_summary_card(m, home_str, away_str, h_score, a_score, m.result)
+    assert buf is not None
+    assert buf.getbuffer().nbytes > 1000
+
+    img = Image.open(buf)
+    assert img.size == (760, 360)
+    assert img.format == "PNG"
 
 
 
