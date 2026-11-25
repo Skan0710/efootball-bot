@@ -1698,16 +1698,19 @@ def test_build_individual_record_embed() -> None:
     player_matches = [(m1, m1.player_stats[0]), (m2, m2.player_stats[0])]
     embed = build_individual_record_embed("Son", player_matches)
 
-    assert "Match History & Contributions — Son" in embed.title
+    assert "Match History — Son" in embed.title
     career_val = embed.fields[0].value
-    assert "Matches Played:** 2" in career_val
-    assert "Total Goals:** 2" in career_val
-    assert "Total Assists:** 2" in career_val
-    assert "Total G/A:** 4" in career_val
-    log_val = embed.fields[1].value
-    assert "M-20261120-01" in log_val
-    assert "M-20261121-02" in log_val
-    assert "⚽ **2** Goal(s)" in log_val
+    assert "Matches: **2**" in career_val
+    assert "Record: **1W - 0D - 1L** (50.0% Win Rate)" in career_val
+    assert "Goals: **2**, Assists: **2** = 🌟 **4 G/A**" in career_val
+    # 1 career overview field + 2 match fields = 3 fields
+    assert len(embed.fields) == 3
+    assert "M-20261121-02" in embed.fields[1].name
+    assert "🔴 Loss" in embed.fields[1].name
+    assert "0 Goals, 1 Assist = 🌟 1 G/A" in embed.fields[1].value
+    assert "M-20261120-01" in embed.fields[2].name
+    assert "🟢 Win" in embed.fields[2].name
+    assert "2 Goals, 1 Assist = 🌟 3 G/A" in embed.fields[2].value
 
 
 def test_build_match_highlights_embed() -> None:

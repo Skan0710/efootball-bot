@@ -455,42 +455,35 @@ def build_individual_record_page_embed(
     page_matches = all_player_matches[start_idx:end_idx]
 
     embed = discord.Embed(
-        title=f"📋 Match History & Contributions — {player}",
+        title=f"Match History — {player}",
         color=discord.Color.blue(),
         timestamp=datetime.now(),
     )
 
     career_summary = (
-        f"🎮 **Matches Played:** {total_matches}   |   🏆 **Win Rate:** {win_rate:.1f}% ({wins}W - {draws}D - {losses}L)\n"
-        f"⚽ **Total Goals:** {total_goals}   |   🎯 **Total Assists:** {total_assists}   |   🌟 **Total G/A:** {total_ga} (avg {(total_ga / total_matches):.2f}/gm)"
+        f"Matches: **{total_matches}**\n"
+        f"Record: **{wins}W - {draws}D - {losses}L** ({win_rate:.1f}% Win Rate)\n"
+        f"Goals: **{total_goals}**, Assists: **{total_assists}** = 🌟 **{total_ga} G/A**"
     )
-    embed.add_field(name="📊 Career Overview", value=career_summary, inline=False)
+    embed.add_field(name="Career Overview", value=career_summary, inline=False)
 
-    match_blocks = []
     for offset, (match, stat) in enumerate(page_matches, start=start_idx + 1):
         outcome_tag = (
-            "🟢 **WIN**" if stat.result in (MatchResult.WIN, MatchResult.HOME_WIN)
-            else ("🔴 **LOSS**" if stat.result in (MatchResult.LOSS, MatchResult.AWAY_WIN) else "🟡 **DRAW**")
+            "🟢 Win" if stat.result in (MatchResult.WIN, MatchResult.HOME_WIN)
+            else ("🔴 Loss" if stat.result in (MatchResult.LOSS, MatchResult.AWAY_WIN) else "🟡 Draw")
         )
-        date_str = match.date[:10] if match.date else "N/A"
         scoreline = format_match_scoreline(match)
+        g_word = "Goal" if stat.goals == 1 else "Goals"
+        a_word = "Assist" if stat.assists == 1 else "Assists"
+        ga_total = stat.goals + stat.assists
 
-        block = (
-            f"**Match #{offset}**  •  {outcome_tag}\n"
-            f"🆔 `{match.match_id}`  •  📅 {date_str}\n"
-            f"🏟️ {scoreline}\n"
-            f"📈 **Player Impact:** ⚽ **{stat.goals}** Goal(s)   🎯 **{stat.assists}** Assist(s)   🌟 **{stat.goals + stat.assists}** G/A"
+        embed.add_field(
+            name=f"{offset}. {outcome_tag} : {match.match_id}",
+            value=f"{scoreline}\n{stat.goals} {g_word}, {stat.assists} {a_word} = 🌟 {ga_total} G/A",
+            inline=False,
         )
-        match_blocks.append(block)
 
-    formatted_content = "\n\n───────────────────────────────\n\n".join(match_blocks) if match_blocks else "*No matches found.*"
-    embed.add_field(
-        name=f"🎮 Match Log (Showing {start_idx + 1}–{end_idx} of {total_matches})",
-        value=formatted_content,
-        inline=False,
-    )
-
-    embed.set_footer(text=f"Page {bounded_page + 1} of {total_pages} • 5 matches per page • Use buttons below to change pages")
+    embed.set_footer(text=f"Page {bounded_page + 1} of {total_pages} • Only visible to you")
     return embed
 
 
@@ -4150,9 +4143,9 @@ def register_commands(
         view = IndividualRecordPaginationView(canonical_name, player_matches, author_id=interaction.user.id, page_size=5)
         embed = view.build_current_page_embed()
         if view.total_pages > 1:
-            await interaction.response.send_message(embed=embed, view=view)
+            await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
         else:
-            await interaction.response.send_message(embed=embed)
+            await interaction.response.send_message(embed=embed, ephemeral=True)
 
     # 21. /highlights
     @tree.command(
