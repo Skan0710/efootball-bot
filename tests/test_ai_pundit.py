@@ -51,8 +51,29 @@ def test_rule_based_fallback_performance_assignment(sample_match: MatchRecord) -
     # Keane should roast Skan (0G 0A on losing side)
     assert "Skan" in review.keane_roast
     assert "Zero goals, zero assists" in review.keane_roast
-    # Locker room banter should mention controller/ping
-    assert "controller" in review.locker_room_banter or "excuses" in review.locker_room_banter
+    # Locker room banter should use mobile excuses for non-Lilly players (never controller)
+    assert "controller" not in review.locker_room_banter.lower()
+    assert "phone screen" in review.locker_room_banter.lower() or "ping" in review.locker_room_banter.lower()
+
+
+def test_rule_based_fallback_lilly_allows_controller_excuse() -> None:
+    """Verifies controller banter is used only when Lilly is the underperformer."""
+    m = MatchRecord(
+        match_id="M-TEST-LILLY-01",
+        date="2026-11-27 12:00:00",
+        result=MatchResult.HOME_WIN,
+        submitted_by="AdminUser",
+        notes="Score: Suri & Skan 3 - 0 Lilly & Azlan (Home Win)",
+        player_stats=[
+            PlayerStat(player="Suri", goals=2, assists=1, result=MatchResult.HOME_WIN),
+            PlayerStat(player="Skan", goals=1, assists=2, result=MatchResult.HOME_WIN),
+            PlayerStat(player="Lilly", goals=0, assists=0, result=MatchResult.AWAY_WIN),
+            PlayerStat(player="Azlan", goals=0, assists=1, result=MatchResult.AWAY_WIN),
+        ],
+    )
+    review = _rule_based_fallback_review(m, "Suri & Skan 3 - 0 Lilly & Azlan")
+    assert "Lilly" in review.locker_room_banter
+    assert "controller" in review.locker_room_banter.lower()
 
 
 def test_rule_based_fallback_draw_match() -> None:

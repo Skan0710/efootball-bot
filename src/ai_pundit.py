@@ -130,16 +130,24 @@ def _rule_based_fallback_review(match: MatchRecord, scoreline: str) -> PunditRev
             "the game by the scruff of the neck. Serious lack of character."
         )
 
-    # 3. Locker room banter
+    # 3. Locker room banter (Mobile-first excuses; controller excuses ONLY for Lilly)
     if worst_player and best_player and worst_player.player != best_player.player:
+        if worst_player.player.strip().lower() == "lilly":
+            excuse_line = (
+                f"Someone check {worst_player.player}'s controller, the batteries or stick drift must have kicked in by the 10th minute!"
+            )
+        else:
+            excuse_line = (
+                f"Someone wipe {worst_player.player}'s phone screen, those sweaty thumbs and phantom taps cost us today!"
+            )
         locker = (
-            f'"Someone check {worst_player.player}\'s controller, the batteries must have died in the 10th minute! '
+            f'"{excuse_line} '
             f'Meanwhile {best_player.player} is literally carrying the entire server on their back. '
-            f'No excuses about script or ping today boys—the scoreboard doesn\'t lie."'
+            f'No excuses about Konami script or Wi-Fi ping today boys—the scoreboard doesn\'t lie."'
         )
     else:
         locker = (
-            '"Already hearing the classic excuses in voice chat—input delay, script lag, and sweaty tactics. '
+            '"Already hearing the classic excuses in voice chat—touchscreen lag, Wi-Fi ping spikes, battery saver kicking in, and Konami script. '
             'Time to hit the training ground and run it back."'
         )
 
@@ -187,13 +195,15 @@ async def generate_pundit_review(
 
     prompt = (
         "You are an expert football pundit panel reviewing an eFootball co-op match between friends.\n"
+        "IMPORTANT PLATFORM RULE: Everyone in this group plays on eFootball Mobile (touchscreen, sweaty thumbs, accidental taps, Wi-Fi/mobile data lag, battery saver, Konami script) EXCEPT Lilly, who is the ONLY player using a controller. "
+        "NEVER mention controller issues, stick drift, or controller batteries for anyone other than Lilly — for every other player, use mobile/touchscreen/lag/battery/Wi-Fi excuses instead.\n"
         f"Match ID: {match.match_id}\n"
         f"Scoreline & Outcome: {scoreline} ({match.result.value})\n"
         f"Stats: {' | '.join(stats_summary)}\n\n"
         "Generate a JSON object with EXACTLY three string keys reviewing THIS SPECIFIC MATCH ONLY (keep each under 60 words for concise token efficiency):\n"
         "- 'drury': Poetic, dramatic Peter Drury commentary praising the standout winners or clutch drama.\n"
         "- 'keane': Roy Keane brutal roast tearing into the worst performer, chokers, or players with 0G/0A.\n"
-        "- 'locker_room': Witty locker room / Discord voice chat banter about lag, script, controllers, and who carried whom.\n"
+        "- 'locker_room': Witty locker room / Discord voice chat banter about mobile lag, sweaty thumbs, Konami script (and controller issues ONLY if Lilly is involved), and who carried whom.\n"
         "CRITICAL: Do NOT use internal double quotes (\") inside any field values. Use single quotes (') instead. Output valid JSON only."
     )
 
