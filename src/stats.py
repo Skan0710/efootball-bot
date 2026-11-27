@@ -2797,3 +2797,51 @@ def calculate_squad_lineup(
         "defenders": defenders,
         "all_players": all_cards,
     }
+
+
+def calculate_match_badges(
+    match: MatchRecord,
+    home_score: Optional[int] = None,
+    away_score: Optional[int] = None,
+) -> List[str]:
+    """Computes automatic match-type badges (Demolition, Goal Fest, Brick Wall, Carry Job, etc.)."""
+    if home_score is not None and away_score is not None:
+        h_score, a_score = int(home_score), int(away_score)
+    else:
+        h_score, a_score = extract_match_scores(match)
+
+    total_goals = h_score + a_score
+    goal_diff = abs(h_score - a_score)
+    badges: List[str] = []
+
+    if goal_diff >= 4:
+        badges.append(f"💥 **Demolition** ({max(h_score, a_score)}–{min(h_score, a_score)} blowout)")
+
+    if total_goals >= 7:
+        badges.append(f"🎆 **Goal Fest** ({total_goals} total goals)")
+
+    if match.result != MatchResult.DRAW and min(h_score, a_score) == 0 and total_goals >= 1:
+        badges.append("🧱 **Brick Wall** (Clean sheet win)")
+
+    if match.result == MatchResult.DRAW and h_score == 0 and a_score == 0:
+        badges.append("🤝 **Stalemate** (0–0 deadlock)")
+    elif (match.result == MatchResult.DRAW and total_goals >= 6) or (goal_diff == 1 and total_goals >= 5):
+        badges.append("🔥 **Thriller** (End-to-end battle)")
+
+    # Check Carry Job per side (>= 75% of team's goals with at least 2 goals)
+    win_side = [p for p in match.player_stats if p.result in (MatchResult.WIN, MatchResult.HOME_WIN)]
+    loss_side = [p for p in match.player_stats if p.result in (MatchResult.LOSS, MatchResult.AWAY_WIN)]
+    draw_side = [p for p in match.player_stats if p.result == MatchResult.DRAW]
+
+    for side in (win_side, loss_side, draw_side):
+        if not side:
+            continue
+        team_goals = sum(p.goals for p in side)
+        if team_goals >= 2:
+            top_scorer = max(side, key=lambda p: p.goals)
+            if top_scorer.goals >= 2 and (top_scorer.goals / team_goals) >= 0.75:
+                badges.append(
+                    f"🎒 **Carry Job** ({top_scorer.player} scored {top_scorer.goals}/{team_goals} team goals)"
+                )
+
+    return badges

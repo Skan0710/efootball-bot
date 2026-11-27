@@ -34,6 +34,7 @@ from stats import (
     calculate_duo_card_stats,
     calculate_hall_of_fame,
     calculate_head_to_head,
+    calculate_match_badges,
     calculate_match_motm_and_milestones,
     calculate_player_aggregates,
     calculate_player_card_stats,
@@ -263,6 +264,10 @@ def build_latest_match_embed(
 
     if match.notes and not match.notes.strip().lower().startswith("score:"):
         embed.add_field(name="📝 Notes", value=match.notes, inline=False)
+
+    badges = calculate_match_badges(match)
+    if badges:
+        embed.add_field(name="🏷️ Match Badges", value="\n".join(badges), inline=False)
 
     embed.set_footer(text="eFootball Co-op Statistics • /latest-match | /delete-latest")
     return embed
@@ -1161,6 +1166,14 @@ class MatchPreviewView(discord.ui.View):
                         announce_embed.add_field(
                             name="🏆 Milestones Unlocked",
                             value="\n".join(milestones),
+                            inline=False,
+                        )
+
+                    match_badges = calculate_match_badges(record, home_score=h_val, away_score=a_val)
+                    if match_badges:
+                        announce_embed.add_field(
+                            name="🏷️ Match Badges",
+                            value="\n".join(match_badges),
                             inline=False,
                         )
 

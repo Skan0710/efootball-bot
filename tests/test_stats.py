@@ -1412,6 +1412,64 @@ def test_compute_player_defending_stat_pure_hybrid() -> None:
     assert suri_def - att_def >= 18
 
 
+def test_calculate_match_badges() -> None:
+    """Verifies automatic match badges for blowouts, goal fests, clean sheets, and carry jobs."""
+    from stats import calculate_match_badges
+
+    # Demolition + Goal Fest + Carry Job
+    m_blowout = MatchRecord(
+        match_id="M-BADGE-1",
+        date="2026-11-27 12:00:00",
+        result=MatchResult.HOME_WIN,
+        submitted_by="Admin",
+        notes="Score: 6 - 1 (Home Win)",
+        player_stats=[
+            PlayerStat(player="Suri", goals=5, assists=0, result=MatchResult.HOME_WIN),
+            PlayerStat(player="Skan", goals=1, assists=4, result=MatchResult.HOME_WIN),
+            PlayerStat(player="Annie", goals=1, assists=0, result=MatchResult.AWAY_WIN),
+            PlayerStat(player="Jonny", goals=0, assists=1, result=MatchResult.AWAY_WIN),
+        ],
+    )
+    badges = calculate_match_badges(m_blowout, home_score=6, away_score=1)
+    joined = " | ".join(badges)
+    assert "Demolition" in joined
+    assert "Goal Fest" in joined
+    assert "Carry Job" in joined
+    assert "Brick Wall" not in joined
+
+    # Brick Wall (clean sheet win) + Thriller check
+    m_clean = MatchRecord(
+        match_id="M-BADGE-2",
+        date="2026-11-27 12:30:00",
+        result=MatchResult.HOME_WIN,
+        submitted_by="Admin",
+        notes="Score: 2 - 0 (Home Win)",
+        player_stats=[
+            PlayerStat(player="Lilly", goals=1, assists=1, result=MatchResult.HOME_WIN),
+            PlayerStat(player="Azlan", goals=1, assists=0, result=MatchResult.HOME_WIN),
+            PlayerStat(player="Son", goals=0, assists=0, result=MatchResult.AWAY_WIN),
+            PlayerStat(player="Roshan", goals=0, assists=0, result=MatchResult.AWAY_WIN),
+        ],
+    )
+    clean_badges = calculate_match_badges(m_clean, home_score=2, away_score=0)
+    assert any("Brick Wall" in b for b in clean_badges)
+
+    # Stalemate (0-0 draw)
+    m_draw = MatchRecord(
+        match_id="M-BADGE-3",
+        date="2026-11-27 13:00:00",
+        result=MatchResult.DRAW,
+        submitted_by="Admin",
+        notes="Score: 0 - 0 (Draw)",
+        player_stats=[
+            PlayerStat(player="Suri", goals=0, assists=0, result=MatchResult.DRAW),
+            PlayerStat(player="Skan", goals=0, assists=0, result=MatchResult.DRAW),
+        ],
+    )
+    draw_badges = calculate_match_badges(m_draw, home_score=0, away_score=0)
+    assert any("Stalemate" in b for b in draw_badges)
+
+
 
 
 
