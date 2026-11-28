@@ -210,17 +210,10 @@ class EFootballBot(commands.Bot):
             )
             # Announce completed POTW the moment the bot is on
             await self.check_and_announce_potw()
-            # Announce code updates if a new update/commit has been deployed
-            await self.check_and_announce_code_update()
 
     async def check_and_announce_code_update(self) -> bool:
-        """Checks if a new code update was deployed and announces it to the updates channel."""
-        try:
-            from update_notifier import check_and_announce_update
-            return await check_and_announce_update(self, self.bot_config)
-        except Exception as exc:
-            LOGGER.warning("Could not execute code update announcement: %s", exc)
-            return False
+        """Code update announcements are permanently disabled."""
+        return False
 
     async def on_message(self, message: discord.Message) -> None:
         """Listens for screenshots pasted directly (Ctrl+V) into authorized channel."""

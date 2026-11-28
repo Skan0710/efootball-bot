@@ -140,6 +140,54 @@ def test_is_user_admin_check(test_config: BotConfig) -> None:
 
 
 @pytest.mark.asyncio
+async def test_non_admin_blocked_from_add_edit_delete_and_paste(test_config: BotConfig, tmp_path: Path) -> None:
+    """Verifies normal members cannot add, edit, paste-submit, or delete matches."""
+    from commands_handler import handle_pasted_match_message
+
+    bot = EFootballBot(test_config)
+    cmd_map = {cmd.name: cmd for cmd in bot.tree.get_commands()}
+
+    member = MagicMock(spec=discord.Member)
+    member.guild_permissions.administrator = False
+    member.roles = []
+
+    def _make_non_admin_inter() -> MagicMock:
+        inter = MagicMock(spec=discord.Interaction)
+        inter.guild = MagicMock()
+        inter.guild_id = test_config.guild_id
+        inter.channel_id = test_config.allowed_channel_id
+        inter.user = member
+        inter.response = MagicMock()
+        inter.response.send_message = AsyncMock()
+        return inter
+
+    for cmd_name, kwargs in [
+        ("add-match-image", {}),
+        ("add-match-text", {}),
+        ("edit-match", {"match_id": "M-ANY"}),
+        ("delete-match", {"match_id": "M-ANY", "password": test_config.delete_password}),
+        ("delete-latest", {"password": test_config.delete_password}),
+        ("delete-all", {"password": test_config.delete_password}),
+    ]:
+        inter = _make_non_admin_inter()
+        await cmd_map[cmd_name].callback(inter, **kwargs)
+        inter.response.send_message.assert_awaited_once()
+        msg = inter.response.send_message.call_args[0][0]
+        assert "administrator" in msg.lower() or "permission" in msg.lower()
+        assert inter.response.send_message.call_args[1]["ephemeral"] is True
+
+    # Direct Ctrl+V paste by non-admin should be ignored without downloading/replying
+    mock_msg = MagicMock(spec=discord.Message)
+    mock_msg.author = member
+    mock_msg.reply = AsyncMock()
+    mock_att = MagicMock(spec=discord.Attachment)
+    mock_att.save = AsyncMock()
+    await handle_pasted_match_message(mock_msg, [mock_att], test_config, ExcelManager(tmp_path / "wb.xlsx"))
+    mock_att.save.assert_not_called()
+    mock_msg.reply.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_preview_view_security_and_save(tmp_path: Path) -> None:
     """Verifies that only the submitting user can interact and Confirm saves match."""
     wb_path = tmp_path / "matches.xlsx"
@@ -960,8 +1008,13 @@ async def test_edit_match_command_and_modal(test_config: BotConfig) -> None:
     assert len(choices) == 1
     assert choices[0].value == "M-EDIT-1"
 
-    # Execute /edit-match -> sends pre-filled modal
+    # Execute /edit-match -> sends pre-filled modal (as admin)
+    admin_member = MagicMock(spec=discord.Member)
+    admin_member.guild_permissions.administrator = True
+    admin_member.roles = []
     inter = MagicMock(spec=discord.Interaction)
+    inter.guild = MagicMock()
+    inter.user = admin_member
     inter.guild_id = test_config.guild_id
     inter.channel_id = test_config.allowed_channel_id
     inter.response = MagicMock()

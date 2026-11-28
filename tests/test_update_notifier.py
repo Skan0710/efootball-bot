@@ -147,3 +147,19 @@ def test_announcement_timing_gate() -> None:
     assert isinstance(before, bool)
     remaining = seconds_until_announcement_time(target_hour=23, target_minute=0)
     assert remaining >= 0.0
+
+
+@pytest.mark.asyncio
+async def test_bot_code_update_announcement_disabled(tmp_path: Path) -> None:
+    """Verifies that EFootballBot.check_and_announce_code_update is disabled and returns False."""
+    from bot import EFootballBot
+
+    cfg = BotConfig(
+        discord_token="fake_token",
+        guild_id=12345,
+        workbook_path=tmp_path / "matches.xlsx",
+        update_channel_id=DEFAULT_UPDATE_CHANNEL_ID,
+        update_role_id=DEFAULT_UPDATE_ROLE_ID,
+    )
+    bot = EFootballBot(cfg)
+    assert await bot.check_and_announce_code_update() is False

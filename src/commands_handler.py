@@ -131,20 +131,25 @@ def check_guild_and_channel(interaction: discord.Interaction, config: BotConfig)
     return None
 
 
-def is_user_admin(interaction: discord.Interaction, config: BotConfig) -> bool:
-    """Checks whether the user has administrator permission or the configured admin role."""
-    if not interaction.guild or not isinstance(interaction.user, discord.Member):
+def is_member_admin(member: object, config: BotConfig) -> bool:
+    """Checks whether a guild member has administrator permission or the configured admin role."""
+    if not isinstance(member, discord.Member):
         return False
 
-    # Check Discord Administrator permission
-    if interaction.user.guild_permissions.administrator:
+    if member.guild_permissions.administrator:
         return True
 
-    # Check configured admin role
     if config.admin_role_id:
-        return any(role.id == config.admin_role_id for role in interaction.user.roles)
+        return any(role.id == config.admin_role_id for role in member.roles)
 
     return False
+
+
+def is_user_admin(interaction: discord.Interaction, config: BotConfig) -> bool:
+    """Checks whether the user has administrator permission or the configured admin role."""
+    if not interaction.guild:
+        return False
+    return is_member_admin(interaction.user, config)
 
 
 def parse_players_from_team_param(team_param: Optional[str]) -> List[str]:
@@ -1903,8 +1908,11 @@ async def handle_pasted_match_message(
     config: BotConfig,
     excel_manager: ExcelManager,
 ) -> None:
-    """Handles screenshots pasted directly into the channel via Ctrl+V."""
+    """Handles screenshots pasted directly into the channel via Ctrl+V (Admins only)."""
     if not attachments:
+        return
+
+    if not is_member_admin(message.author, config):
         return
 
     temp_dir = Path(tempfile.gettempdir()) / "efootball_ocr"
@@ -2067,6 +2075,13 @@ def register_commands(
         err = check_guild_and_channel(interaction, config)
         if err:
             await interaction.response.send_message(f"❌ {err}", ephemeral=True)
+            return
+
+        if not is_user_admin(interaction, config):
+            await interaction.response.send_message(
+                "❌ Only server administrators can add match records.",
+                ephemeral=True,
+            )
             return
 
         # Check that at least one image source was provided
@@ -2247,6 +2262,13 @@ def register_commands(
         err = check_guild_and_channel(interaction, config)
         if err:
             await interaction.response.send_message(f"❌ {err}", ephemeral=True)
+            return
+
+        if not is_user_admin(interaction, config):
+            await interaction.response.send_message(
+                "❌ Only server administrators can add match records.",
+                ephemeral=True,
+            )
             return
 
         modal = AddMatchTextModal(excel_manager=excel_manager, config=config)
@@ -3504,6 +3526,13 @@ def register_commands(
         err = check_guild_and_channel(interaction, config)
         if err:
             await interaction.response.send_message(f"❌ {err}", ephemeral=True)
+            return
+
+        if not is_user_admin(interaction, config):
+            await interaction.response.send_message(
+                "❌ Only server administrators can edit match records.",
+                ephemeral=True,
+            )
             return
 
         match_rec = await excel_manager.get_match(match_id.strip())
